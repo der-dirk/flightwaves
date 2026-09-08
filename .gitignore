@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Konfiguration mit Zugangsdaten und Standortkoordinaten
+config.local.*
+.env
+*.secret
+
+# Messdaten – gehören nie ins Repo
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+recordings/
+*.wav
+*.flac
+
+# Stammdaten (werden erzeugt, nicht versioniert)
+aircraft_database.*
+
+# Werkzeuge
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
