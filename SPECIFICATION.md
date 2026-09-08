@@ -194,6 +194,28 @@ Der Live-Datenstrom enthält **keinen Flugzeugtyp**, nur die ICAO24-Kennung.
   der Zuordnungstabelle abgeleitet, damit eine geänderte Zuordnung keine
   Migration braucht.
 
+### Lärmklassen je Typenkürzel
+
+`assets/noise_classes.csv` ordnet jedem Typenkürzel eine Lärmklasse zu, erzeugt
+durch `tool/build_noise_classes.py` in drei Ebenen:
+
+1. **Kuratiert** – die 168 Verkehrsflugzeuge aus dem Schwesterprojekt. Sie
+   gewinnen bei jedem Konflikt, weil Doc 8643 die Gewichtsklasse nicht kennt:
+   Ein CRJ steht dort in derselben Kategorie `M` wie ein A320, obwohl er rund
+   5 dB leiser ist.
+2. **Sammelkürzel** – Kennungen, die kein Muster benennen (`GLID`, `BALL`,
+   `PARA`, `ZZZZ`) oder in Doc 8643 fehlen; kurz gehalten und einzeln belegt.
+3. **Doc 8643** – alles Übrige mechanisch aus Antriebsart und
+   Wirbelschleppenkategorie, statt einer Pflegeliste über tausende Muster.
+
+Die Ebenen 1 und 3 stimmen auf den kuratierten Mustern in 131 von 162 Fällen
+überein; die 31 Abweichungen sind systematisch (Regionaljets und die B757, die
+Doc 8643 als `M` führt) und genau der Grund für die Reihenfolge.
+
+Abdeckung gegen den mitgelieferten Bestand: **99,9 %** der Registereinträge.
+Die verbleibenden 471 Einträge in 144 seltenen Kürzeln bleiben bewusst
+unbekannt, statt geraten zu werden.
+
 ---
 
 ## 5. Wetterdaten
@@ -288,6 +310,13 @@ L = Referenzpegel(Lärmklasse)
 | Laterale Dämpfung | bis 8 dB, linear ansteigend unterhalb 20° Elevationswinkel (Bodeneffekt und Bebauung bei streifendem Einfall) |
 | Schubkorrektur | aus der Steigrate: ≥5 m/s → +6, ≥2 → +4, >−2 → 0, >−6 → −2, sonst −3 dB |
 
+- Zwei Klassen bekommen **keinen** Referenzpegel und damit keine Prognose:
+  `unpowered` (Segelflugzeuge, Ballone, Fallschirmspringer, Drohnen – 7,0 %
+  des Bestands) und `notAircraft` (Bodenfahrzeuge, Türme, undefinierte
+  Kennungen – 1,0 %). Ohne diese Unterscheidung fallen sie auf den
+  Ersatzpegel `unbekannt` von 80 dB(A), dem Referenzpegel eines
+  Verkehrsflugzeugs, und erzeugen laute Prognosen für stille Objekte.
+  `notAircraft` wird zusätzlich aus jeder Auswertung genommen.
 - Die **Luftabsorption gehört in die erste Version**, nicht in eine spätere
   Ausbaustufe: Über 9 km trägt sie in derselben Größenordnung bei wie die
   geometrische Ausbreitung. Ein Modell ohne sie liegt bei Überflügen in
@@ -639,9 +668,16 @@ Messung, dieses System misst stationär und liefert die Grundlage, um die
 Schätzung zu prüfen.
 
 **Wird von dort übernommen** (nicht neu entwickelt): Aircraft-Database und
-Erzeugungswerkzeug, Lärmklassentabelle und Referenzpegel, das Modell aus
-Abschnitt 6, die Laufzeitkorrektur, die energetische Pegelsummierung, die
-Kategorieschwellen, die Konvention "keine Bewertung von Flügen".
+Erzeugungswerkzeug, die Referenzpegel, das Modell aus Abschnitt 6, die
+Laufzeitkorrektur, die energetische Pegelsummierung, die Kategorieschwellen,
+die Konvention "keine Bewertung von Flügen".
+
+**Entsteht hier und fließt zurück:** die **Lärmklassentabelle**. Die Tabelle
+der App deckt 168 Muster ab – gemessen am mitgelieferten Bestand sind das
+40,5 % der Registereinträge; der Rest fällt auf `unbekannt` mit 80 dB(A).
+`assets/noise_classes.csv` erreicht 99,9 % und unterscheidet zusätzlich
+antriebslose Luftfahrzeuge und Nicht-Luftfahrzeuge. Die App sollte diese
+Tabelle übernehmen, statt ihre eigene zu pflegen.
 
 **Gilt hier nicht:** der 10-Sekunden-Abfragetakt (die App fragt nur bei
 geöffnetem Bildschirm ab, dieses System läuft durchgehend – daher der eigene

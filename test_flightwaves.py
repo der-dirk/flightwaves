@@ -1,5 +1,6 @@
 """Prüfungen der Regeln, die nicht offensichtlich sind: python3 -m pytest"""
 
+import csv
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -155,6 +156,31 @@ def test_stammdaten_werden_aus_csv_gebaut_und_offline_gelesen(tmp_path):
     lookup = db.aircraft_types(ziel)
     assert lookup("3c6444") == "A320" and lookup("000000") is None
     assert db.aircraft_types(tmp_path / "fehlt.sqlite")("3c6444") is None
+
+
+def test_laermklassen_decken_den_bestand_ab():
+    """Die mitgelieferte Zuordnung muss den mitgelieferten Bestand auflösen.
+
+    Der Test schlägt an, wenn eine neu erzeugte Tabelle Muster verliert – die
+    stille Verschlechterung, die man einer CSV sonst nicht ansieht.
+    """
+    klassen = {}
+    with open("assets/noise_classes.csv", encoding="utf-8") as handle:
+        for row in csv.DictReader(li for li in handle if not li.startswith("#")):
+            klassen[row["typecode"]] = row["noise_class"]
+
+    erlaubt = {"heavyJet", "mediumJet", "regionalJet", "turboprop",
+               "lightPiston", "helicopter", "unpowered", "notAircraft"}
+    assert set(klassen.values()) <= erlaubt
+    assert klassen["A320"] == "mediumJet" and klassen["CRJ9"] == "regionalJet"
+    assert klassen["GLID"] == "unpowered" and klassen["ZZZZ"] == "notAircraft"
+
+    gesamt = offen = 0
+    with open("assets/aircraft_types.csv", encoding="utf-8", errors="replace") as handle:
+        for row in csv.DictReader(li for li in handle if not li.startswith("#")):
+            gesamt += 1
+            offen += row["typecode"].strip().upper() not in klassen
+    assert offen / gesamt < 0.005, f"{offen} von {gesamt} Einträgen ohne Lärmklasse"
 
 
 def test_stammdaten_mit_herkunftskopf_werden_gelesen(tmp_path):

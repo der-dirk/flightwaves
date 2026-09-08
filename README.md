@@ -38,6 +38,16 @@ dieselben Muster auflösen. Der `aircraft-db`-Aufruf oben macht daraus eine
 SQLite-Datei; ohne sie bleibt `aircraft_type` leer und die Aufzeichnung läuft
 trotzdem weiter.
 
+Welchen Lärm ein Muster macht, steht in
+[`assets/noise_classes.csv`](assets/noise_classes.csv) – 2.730 Typenkürzel,
+99,9 % des Bestands. Erzeugt aus drei Ebenen (Abschnitt 4 der Spezifikation):
+kuratierte Verkehrsflugzeuge, eine kurze Liste für Sammelkürzel wie `GLID` oder
+`ZZZZ`, und für alles Übrige die ICAO-Doc-8643-Merkmale. Neu erzeugen:
+
+```sh
+python3 tool/build_noise_classes.py <doc8643.csv>
+```
+
 ## Entwicklung
 
 Tests und Linter laufen im Container, damit lokal nichts installiert werden
