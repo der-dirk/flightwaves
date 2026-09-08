@@ -155,3 +155,16 @@ def test_stammdaten_werden_aus_csv_gebaut_und_offline_gelesen(tmp_path):
     lookup = db.aircraft_types(ziel)
     assert lookup("3c6444") == "A320" and lookup("000000") is None
     assert db.aircraft_types(tmp_path / "fehlt.sqlite")("3c6444") is None
+
+
+def test_stammdaten_mit_herkunftskopf_werden_gelesen(tmp_path):
+    """Der Bestand in assets/ trägt einen Kommentarblock vor der Kopfzeile."""
+    quelle = tmp_path / "aircraft.csv"
+    quelle.write_text(
+        "# FlightWaves – Flugzeug-Stammdaten\n"
+        "# Quelle: aircraft-database-complete-2025-08.csv\n"
+        "icao24,typecode\n3c6444,A320\n"
+    )
+    ziel = tmp_path / "aircraft.sqlite"
+    assert db.build_aircraft_db(quelle, ziel) == 1
+    assert db.aircraft_types(ziel)("3c6444") == "A320"

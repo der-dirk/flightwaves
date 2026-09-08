@@ -18,12 +18,25 @@ Nur Python 3.11 und die Standardbibliothek, kein `pip install`:
 
 ```sh
 cp config.example.toml config.local.toml     # Standort eintragen
-python3 -m flightwaves --config config.local.toml aircraft-db aircraft.csv
+python3 -m flightwaves --config config.local.toml aircraft-db assets/aircraft_types.csv
 python3 -m flightwaves --config config.local.toml collect
 python3 -m flightwaves --config config.local.toml check    # Abnahme Stufe 1.1
 ```
 
 Im Dauerbetrieb übernimmt das die Unit in [`systemd/`](systemd/).
+
+## Flugzeug-Stammdaten
+
+ADS-B überträgt kein Flugzeugmuster, nur die ICAO24-Kennung. Den Typ löst
+[`assets/aircraft_types.csv`](assets/aircraft_types.csv) auf: 515.354 Muster,
+übernommen aus dem Schwesterprojekt, das sie aus der frei verfügbaren
+[OpenSky-Aircraft-Database](https://opensky-network.org/datasets/metadata/)
+(Ausgabe 2025-08) auf die beiden gebrauchten Spalten reduziert hat.
+
+Der Bestand wird nicht neu gebaut, sondern übernommen – beide Projekte sollen
+dieselben Muster auflösen. Der `aircraft-db`-Aufruf oben macht daraus eine
+SQLite-Datei; ohne sie bleibt `aircraft_type` leer und die Aufzeichnung läuft
+trotzdem weiter.
 
 ## Entwicklung
 

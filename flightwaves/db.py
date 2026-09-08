@@ -96,13 +96,17 @@ def build_aircraft_db(csv_path, out_path):
     Erwartet Spalten icao24 und typecode; erkannt werden auch die Kopfzeilen
     des Schwesterprojekts (type/type_designator). Gespeichert wird nur das
     Typenkürzel – mehr braucht das Modell nicht.
+
+    Führende Kommentarzeilen (`#`) werden übersprungen: Der mitgelieferte
+    Bestand in assets/ trägt dort seinen Herkunftsnachweis, und eine
+    ICAO24-Kennung beginnt nie mit einem Rautezeichen.
     """
     conn = sqlite3.connect(out_path)
     conn.execute("DROP TABLE IF EXISTS aircraft")
     conn.execute("CREATE TABLE aircraft (icao24 TEXT PRIMARY KEY, type_designator TEXT NOT NULL)")
 
     with open(csv_path, newline="", encoding="utf-8", errors="replace") as handle:
-        reader = csv.DictReader(handle)
+        reader = csv.DictReader(line for line in handle if not line.startswith("#"))
         names = {n.lower(): n for n in reader.fieldnames or []}
         icao_col = names.get("icao24") or names.get("icao")
         type_col = names.get("typecode") or names.get("type_designator") or names.get("type")

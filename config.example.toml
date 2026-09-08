@@ -34,7 +34,9 @@ timeout_seconds = 15.0
 
 [database]
 path = "data/flightwaves.db"
-aircraft_path = "data/aircraft_database.sqlite"   # python3 -m flightwaves aircraft-db
+aircraft_path = "data/aircraft_database.sqlite"
+# Erzeugen aus dem mitgelieferten Bestand:
+#   python3 -m flightwaves aircraft-db assets/aircraft_types.csv
 
 [logging]
 level = "INFO"
