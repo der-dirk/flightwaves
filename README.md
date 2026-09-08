@@ -21,10 +21,21 @@ cp config.example.toml config.local.toml     # Standort eintragen
 python3 -m flightwaves --config config.local.toml aircraft-db aircraft.csv
 python3 -m flightwaves --config config.local.toml collect
 python3 -m flightwaves --config config.local.toml check    # Abnahme Stufe 1.1
-python3 -m pytest
 ```
 
 Im Dauerbetrieb übernimmt das die Unit in [`systemd/`](systemd/).
+
+## Entwicklung
+
+Tests und Linter laufen im Container, damit lokal nichts installiert werden
+muss und die Python-Version dieselbe ist wie auf dem Pi:
+
+```sh
+docker compose run --rm dev          # Tests und ruff
+docker compose run --rm dev bash     # Shell im Container
+```
+
+Wer Python 3.11 ohnehin hat, braucht den Container nicht: `python3 -m pytest`.
 
 ## Worum es geht
 
