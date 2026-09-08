@@ -1,6 +1,9 @@
 """Prüfungen der Regeln, die nicht offensichtlich sind: python3 -m pytest"""
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from flightwaves import db
 from flightwaves.collector import Tracker
@@ -136,15 +139,12 @@ def test_neustart_setzt_den_laufenden_flug_fort():
 def test_schema_weist_zeitstempel_ohne_zeitzone_ab():
     conn = db.connect(":memory:")
     conn.execute("INSERT INTO flights (icao24, first_seen_utc, last_seen_utc) VALUES ('a','b','c')")
-    try:
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
         conn.execute(
             "INSERT INTO flight_positions (flight_id, observed_utc, latitude, longitude,"
             " altitude_m, altitude_source, source) VALUES (1,'2026-09-08 12:00:00',1,1,1,"
             "'geometric','adsb')"
         )
-        raise AssertionError("naiver Zeitstempel wurde angenommen")
-    except Exception as error:
-        assert "CHECK" in str(error).upper()
 
 
 def test_stammdaten_werden_aus_csv_gebaut_und_offline_gelesen(tmp_path):

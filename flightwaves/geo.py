@@ -35,7 +35,8 @@ def relate(site_lat, site_lon, site_alt_m, lat, lon, alt_m) -> Relation:
     east = math.radians((lon - site_lon + 180) % 360 - 180) * n_rad * math.cos(math.radians(mid))
     up = alt_m - site_alt_m
     horizontal = math.hypot(east, north)
-    return Relation(horizontal, math.hypot(horizontal, up), math.degrees(math.atan2(up, horizontal)))
+    elevation = math.degrees(math.atan2(up, horizontal))
+    return Relation(horizontal, math.hypot(horizontal, up), elevation)
 
 
 def bounding_box(lat, lon, radius_m):

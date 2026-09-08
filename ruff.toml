@@ -1,0 +1,13 @@
+# Feste Regelauswahl, damit jede ruff-Version dasselbe meldet – ohne sie
+# entscheidet die zufällig installierte Fassung, was ein Fehler ist.
+target-version = "py311"     # wie auf Raspberry Pi OS (Bookworm)
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# Bewusst nicht ausgewählt:
+# EXE  – der Windows-Bind-Mount zeigt jede Datei als ausführbar an
+# BLE  – die Sammelschleifen fangen absichtlich jede Störung ab: kein Netz,
+#        Quelle weg, Kontingent erschöpft werden gleich behandelt (Spez. 13),
+#        und ein Dienst im Dauerbetrieb darf daran nicht sterben

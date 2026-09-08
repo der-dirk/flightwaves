@@ -117,8 +117,7 @@ class Tracker:
                 state = self._open_flight(pos)
                 self.state[pos.icao24] = state
 
-            if pos.observed > state.last_seen:
-                state.last_seen = pos.observed
+            state.last_seen = max(state.last_seen, pos.observed)
             if pos.source == "adsb":
                 state.last_local = pos.observed
             if pos.callsign and not state.callsign:
