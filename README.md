@@ -7,9 +7,24 @@ eine eigene Mikrofonmessung prüft.
 Ein Raspberry Pi mit ADS-B-Empfänger und Messmikrofon. Alles läuft lokal: kein
 Server, keine Cloud, keine Nutzerkonten.
 
-**Stand: Spezifikation.** Es gibt noch keinen Code. Die fachliche Grundlage
-steht vollständig in [`SPECIFICATION.md`](SPECIFICATION.md), inklusive
-Datenmodell, Lärmmodell mit allen Parametern und Abnahmekriterien je Stufe.
+**Stand: Stufe 1.1 (Flugtracking, Datenbank) implementiert.** Die fachliche
+Grundlage steht vollständig in [`SPECIFICATION.md`](SPECIFICATION.md),
+inklusive Datenmodell, Lärmmodell mit allen Parametern und Abnahmekriterien
+je Stufe.
+
+## Betrieb
+
+Nur Python 3.11 und die Standardbibliothek, kein `pip install`:
+
+```sh
+cp config.example.toml config.local.toml     # Standort eintragen
+python3 -m flightwaves --config config.local.toml aircraft-db aircraft.csv
+python3 -m flightwaves --config config.local.toml collect
+python3 -m flightwaves --config config.local.toml check    # Abnahme Stufe 1.1
+python3 -m pytest
+```
+
+Im Dauerbetrieb übernimmt das die Unit in [`systemd/`](systemd/).
 
 ## Worum es geht
 

@@ -1,0 +1,15 @@
+# Nach /etc/systemd/system/ kopieren, Pfade und Benutzer anpassen:
+#   sudo systemctl enable --now flightwaves-collector
+[Unit]
+Description=FlightWaves Flug-Collector
+After=network-online.target dump1090-fa.service
+
+[Service]
+WorkingDirectory=/opt/flightwaves
+ExecStart=/usr/bin/python3 -m flightwaves --config config.local.toml collect
+Restart=always
+RestartSec=5
+User=flightwaves
+
+[Install]
+WantedBy=multi-user.target

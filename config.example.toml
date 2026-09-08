@@ -1,0 +1,40 @@
+# FlightWaves Sensor – Beispielkonfiguration.
+# Kopieren nach config.local.toml (per .gitignore ausgenommen) und anpassen:
+#   python3 -m flightwaves collect --config config.local.toml
+
+[site]
+name = "Beispielstandort"
+latitude_deg = 50.0379
+longitude_deg = 8.5622
+elevation_m = 111.0          # über Meeresspiegel, einschließlich Aufstellhöhe
+geoid_undulation_m = 47.0    # WGS84-Ellipsoid über MSL; in Deutschland 45–50 m.
+                             # Nachschlagen, nicht schätzen: der Wert geht
+                             # unmittelbar in jede geometrische ADS-B-Höhe ein.
+
+[tracking]
+radius_m = 50000             # nur Flugzeuge innerhalb dieser Schrägentfernung
+fine_sampling_radius_m = 20000   # darin jede Meldung (1 Hz), außerhalb gröber
+coarse_sampling_seconds = 5
+flight_gap_seconds = 600     # längere Lücke = neuer Flug
+poll_interval_seconds = 1.0
+
+[dump1090]
+enabled = true
+url = "http://127.0.0.1:8080/data/aircraft.json"
+timeout_seconds = 2.0
+
+[opensky]
+# Ergänzt nur die Abdeckung; der eigene Empfänger hat immer Vorrang.
+enabled = false
+client_id = ""
+client_secret = ""
+poll_interval_seconds = 60   # clientseitig gedrosselt, am Credit-Budget orientiert
+local_grace_seconds = 30     # OpenSky nur, wenn so lange keine lokale Meldung kam
+timeout_seconds = 15.0
+
+[database]
+path = "data/flightwaves.db"
+aircraft_path = "data/aircraft_database.sqlite"   # python3 -m flightwaves aircraft-db
+
+[logging]
+level = "INFO"
