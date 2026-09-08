@@ -1,0 +1,11 @@
+# Tests und Linter:  docker compose run --rm dev
+# Shell im Container: docker compose run --rm dev bash
+#
+# Der Quelltext ist eingehängt, nicht kopiert: Änderungen wirken sofort,
+# ohne neuen Build.
+services:
+  dev:
+    build: .
+    volumes:
+      - .:/app
+    command: sh -c "python -m pytest && ruff check flightwaves test_flightwaves.py"
