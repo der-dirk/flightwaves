@@ -82,6 +82,121 @@ def _scale(value, factor):
     return None if not isinstance(value, (int, float)) else value * factor
 
 
+# --- Wetter: Open-Meteo (Spez. 5) ------------------------------------------
+
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+
+GROUND_FIELDS = (
+    "temperature_2m",
+    "relative_humidity_2m",
+    "pressure_msl",
+    "wind_speed_10m",
+    "wind_direction_10m",
+)
+
+PRESSURE_LEVELS_HPA = (850, 700, 500)
+"""Grob 1,5 / 3 / 5,5 km. Sie gehen in Stufe 1.2 nicht in den Pegel ein und
+werden auch nicht zu einer Kennzahl verdichtet – nur gespeichert. Der
+Zusammenhang mit dem Prognosefehler wird in Stufe 2.2 aus den Messdaten
+gewonnen, statt vorab modelliert zu werden."""
+
+LEVEL_FIELDS = ("temperature", "wind_speed", "wind_direction", "geopotential_height")
+
+
+class Weather(NamedTuple):
+    observed: datetime
+    level_m: float              # 0 = Boden, sonst geopotentielle Höhe
+    wind_direction_deg: float | None
+    wind_speed_ms: float | None
+    temperature_c: float | None
+    humidity_pct: float | None          # nur am Boden
+    pressure_msl_hpa: float | None      # nur am Boden
+    source: str = "open-meteo"
+
+
+def open_meteo_query(latitude, longitude):
+    """Abfrage für Bodenwerte und die drei Druckflächen."""
+    return urllib.parse.urlencode(
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+            "current": ",".join(GROUND_FIELDS),
+            "hourly": ",".join(
+                f"{field}_{level}hPa"
+                for level in PRESSURE_LEVELS_HPA
+                for field in LEVEL_FIELDS
+            ),
+            "wind_speed_unit": "ms",        # sonst km/h
+            "timezone": "UTC",
+            "forecast_days": 1,
+        }
+    )
+
+
+def parse_open_meteo(payload, now):
+    """Antwort in Wetterzeilen übersetzen, eine je Niveau.
+
+    Die Druckflächen liefert Open-Meteo nur stündlich; genommen wird der
+    Zeitpunkt, der ``now`` am nächsten liegt. Fehlende Werte bleiben leer,
+    statt ersetzt zu werden – eine Lücke ist zulässig, ein erfundener Wert
+    nicht (Spez. 13).
+    """
+    rows = []
+    current = payload.get("current") or {}
+    if current.get("time"):
+        rows.append(
+            Weather(
+                observed=_utc(current["time"]),
+                level_m=0.0,
+                wind_direction_deg=current.get("wind_direction_10m"),
+                wind_speed_ms=current.get("wind_speed_10m"),
+                temperature_c=current.get("temperature_2m"),
+                humidity_pct=current.get("relative_humidity_2m"),
+                pressure_msl_hpa=current.get("pressure_msl"),
+            )
+        )
+
+    hourly = payload.get("hourly") or {}
+    times = hourly.get("time") or []
+    if not times:
+        return rows
+
+    index = min(range(len(times)), key=lambda i: abs((_utc(times[i]) - now).total_seconds()))
+    observed = _utc(times[index])
+    for level in PRESSURE_LEVELS_HPA:
+        height = _at(hourly, f"geopotential_height_{level}hPa", index)
+        if height is None:
+            continue        # ohne Höhe hat die Druckfläche keinen Ort
+        rows.append(
+            Weather(
+                observed=observed,
+                level_m=height,
+                wind_direction_deg=_at(hourly, f"wind_direction_{level}hPa", index),
+                wind_speed_ms=_at(hourly, f"wind_speed_{level}hPa", index),
+                temperature_c=_at(hourly, f"temperature_{level}hPa", index),
+                humidity_pct=None,
+                pressure_msl_hpa=None,
+            )
+        )
+    return rows
+
+
+def read_open_meteo(latitude, longitude, timeout):
+    payload = _get_json(f"{OPEN_METEO_URL}?{open_meteo_query(latitude, longitude)}", timeout)
+    return parse_open_meteo(payload, datetime.now(UTC))
+
+
+def _utc(stamp):
+    """Open-Meteo liefert bei timezone=UTC Zeiten ohne Zonenangabe."""
+    moment = datetime.fromisoformat(stamp)
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _at(hourly, name, index):
+    werte = hourly.get(name)
+    return werte[index] if werte and index < len(werte) else None
+
+
 # --- OpenSky ---------------------------------------------------------------
 
 class OpenSky:

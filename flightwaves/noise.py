@@ -151,6 +151,25 @@ def arrival_utc(emitted_utc, slant_distance_m, temperature_c):
     return emitted_utc + timedelta(seconds=travel_time_s(slant_distance_m, temperature_c))
 
 
+def path_temperature_c(ground_temperature_c, levels, altitude_m):
+    """Temperatur für die Schallgeschwindigkeit auf dem Weg (Spez. 6).
+
+    Mittel aus Bodentemperatur und der Temperatur der nächstgelegenen
+    Druckfläche zur Flughöhe; liegen keine Höhenwerte vor, die
+    Bodentemperatur. In 10 km Höhe herrschen −40 °C – mit Bodentemperatur
+    allein ist die Laufzeit rund 10 % zu kurz.
+
+    ``levels`` ist eine Folge von (Höhe in m, Temperatur in °C).
+    """
+    brauchbar = [(hoehe, temp) for hoehe, temp in levels if temp is not None]
+    if not brauchbar:
+        return ground_temperature_c
+    _, nearest = min(brauchbar, key=lambda eintrag: abs(eintrag[0] - altitude_m))
+    if ground_temperature_c is None:
+        return nearest
+    return (ground_temperature_c + nearest) / 2
+
+
 def noise_classes(path=NOISE_CLASSES_CSV):
     """Typenkürzel -> Lärmklasse aus dem mitgelieferten Bestand."""
     with open(path, encoding="utf-8") as handle:

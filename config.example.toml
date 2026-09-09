@@ -32,6 +32,15 @@ poll_interval_seconds = 60   # clientseitig gedrosselt, am Credit-Budget orienti
 local_grace_seconds = 30     # OpenSky nur, wenn so lange keine lokale Meldung kam
 timeout_seconds = 15.0
 
+[weather]
+# Open-Meteo, ohne Schlüssel. Boden plus die Druckflächen 850/700/500 hPa.
+enabled = true
+poll_interval_seconds = 900
+timeout_seconds = 15.0
+# Älterer Bodendruck wird für die Höhenkorrektur verworfen: 30 hPa Abweichung
+# sind rund 240 m Höhenfehler, mehr als die Standardatmosphäre danebenliegt.
+max_qnh_age_seconds = 10800
+
 [database]
 path = "data/flightwaves.db"
 aircraft_path = "data/aircraft_database.sqlite"

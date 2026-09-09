@@ -1,0 +1,15 @@
+# Nach /etc/systemd/system/ kopieren, Pfade und Benutzer anpassen:
+#   sudo systemctl enable --now flightwaves-weather
+[Unit]
+Description=FlightWaves Wetter-Collector
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/flightwaves
+ExecStart=/usr/bin/python3 -m flightwaves --config config.local.toml weather
+Restart=always
+RestartSec=60
+User=flightwaves
+
+[Install]
+WantedBy=multi-user.target
