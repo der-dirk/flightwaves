@@ -75,7 +75,12 @@ def predict(cfg):
         if bisher is None or pegel > bisher[0]:
             lauteste[row["id"]] = (
                 pegel, klasse, row["callsign"], row["aircraft_type"], lage.slant_m,
-                noise.arrival_utc(datetime.fromisoformat(row["observed_utc"]), lage.slant_m),
+                noise.arrival_utc(
+                    datetime.fromisoformat(row["observed_utc"]),
+                    lage.slant_m,
+                    # Platzhalter: der Wetter-Collector der Stufe 1.2 ersetzt ihn.
+                    noise.PLACEHOLDER_TEMPERATURE_C,
+                ),
             )
 
     if not lauteste:

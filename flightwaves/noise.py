@@ -17,8 +17,14 @@ from pathlib import Path
 MODEL_VERSION = "1.0"
 NOISE_CLASSES_CSV = Path(__file__).resolve().parent.parent / "assets" / "noise_classes.csv"
 
-DEFAULT_TEMPERATURE_C = 15.0
-"""Standardatmosphäre. Der Wetter-Collector der Stufe 1.2 liefert den echten Wert."""
+PLACEHOLDER_TEMPERATURE_C = 15.0
+"""Platzhalter der Standardatmosphäre, bis der Wetter-Collector liefert.
+
+Die Temperatur ist überall Pflichtangabe, nie Vorgabewert (Spez. 6): Eine
+feste Schallgeschwindigkeit liegt über einen Weg aus Reiseflughöhe rund 7 %
+zu kurz, systematisch und entfernungsabhängig. Als Vorgabewert versteckt sich
+dieser Fehler; als benannter Platzhalter an der Aufrufstelle findet ihn ein
+grep."""
 
 # Referenzpegel je Lärmklasse in 300 m Schrägentfernung bei Reiseschub.
 # unpowered und notAircraft stehen bewusst nicht darin: ohne diese Lücke
@@ -124,17 +130,17 @@ def combine_dba(levels):
     return 10 * math.log10(energy) if energy else None
 
 
-def speed_of_sound_ms(temperature_c=DEFAULT_TEMPERATURE_C):
+def speed_of_sound_ms(temperature_c):
     """Schallgeschwindigkeit in Luft."""
     return 331.3 + 0.606 * temperature_c
 
 
-def travel_time_s(slant_distance_m, temperature_c=DEFAULT_TEMPERATURE_C):
+def travel_time_s(slant_distance_m, temperature_c):
     """Laufzeit vom Flugzeug zum Standort."""
     return slant_distance_m / speed_of_sound_ms(temperature_c)
 
 
-def arrival_utc(emitted_utc, slant_distance_m, temperature_c=DEFAULT_TEMPERATURE_C):
+def arrival_utc(emitted_utc, slant_distance_m, temperature_c):
     """Ankunftszeit am Standort zu einer Abstrahlzeit.
 
     Die Vorwärtsrichtung braucht keinen Löser (Spez. 6). Bei 10 km sind das

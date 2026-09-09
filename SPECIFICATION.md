@@ -5,8 +5,8 @@ erwartenden Fluglärm prognostiziert und die Prognose gegen eine reale
 akustische Messung prüft. Betrieb an einem festen Standort (Vorgabe, siehe
 Abschnitt 17.2).
 
-Status: Entwurf, Stand 2026-09-08. Ersetzt `development/specifications_draft.md`.
-Das Schwesterprojekt `flightwaves-app-android` (Mobile-App, gleiche fachliche
+Status: Entwurf, Stand 2026-09-09. Ersetzt `development/specifications_draft.md`.
+Das Schwesterprojekt `flightwaves-app-flutter` (Mobile-App, gleiche fachliche
 Grundlage) ist in Abschnitt 16 abgegrenzt.
 
 Ausgelegt für einen Standort **im An- und Abflugbereich eines Drehkreuzes**:
@@ -275,18 +275,48 @@ Zwei Richtungen, unterschiedlich schwer:
   Zustand des Flugzeugs im Abstrahlmoment finden. Das ist implizit – die
   Laufzeit hängt von der Entfernung ab, die Entfernung von der Position zum
   noch unbekannten Abstrahlzeitpunkt – und wird per **Fixpunktiteration**
-  gelöst; sie konvergiert in zwei bis drei Durchläufen, weil ein Flugzeug
-  deutlich langsamer ist als der Schall. Referenzimplementierung:
-  `solveEmission()` in
-  `flightwaves-app-android/lib/core/noise/sound_propagation.dart`, nach
-  Python zu portieren, nicht neu zu erfinden.
+  gelöst. Sie konvergiert, weil ein Flugzeug deutlich langsamer ist als der
+  Schall; der Fehler schrumpft je Durchlauf um den Faktor `v_radial / c`.
+
+  **Über eine Toleranz abbrechen, nicht über eine feste Zahl von
+  Durchläufen**, und bei Nichtkonvergenz keinen Wert liefern. Ein
+  Zwischenergebnis, das nach der letzten Runde übrig bleibt, sieht aus wie
+  eine Lösung und ist keine. Nachgemessen an geraden Bahnen mit konstanter
+  Geschwindigkeit, bis zur Toleranz von 100 ms:
+
+  | Geometrie | Durchläufe | Fehler nach 4 Durchläufen |
+  | --- | --- | --- |
+  | Anflug, 400 m Schrägentfernung | 5 | 48 m |
+  | Abflug, 1 km | 7 | 225 m |
+  | Überflug 250 m/s, 3 km Höhe | 16 | 1757 m |
+  | Reiseflug frontal, 30 km | 16 | 3717 m |
+
+  Die Fehlerspalte gilt jeweils an der ungünstigsten Stelle oberhalb von
+  40 dB(A), also im hörbaren Bereich. Der schlechte Fall ist ein schnelles
+  Flugzeug, das radial auf den Standort zuhält – am Drehkreuz die häufige
+  Geometrie, nicht die exotische. 1757 m sind bei 250 m/s sieben Sekunden und
+  verschieben damit, welche Flüge als gleichzeitig hörbar gelten (Abschnitt 8).
+
+  Referenzimplementierung: `solveEmission()` in
+  `flightwaves-app-flutter/lib/core/noise/sound_propagation.dart`.
+  **Der Algorithmus wird übernommen, seine Parameter nicht.** Dort stehen vier
+  Durchläufe fest und 343 m/s als Schallgeschwindigkeit; für die Anzeige einer
+  App ist beides folgenlos, für eine Messung nicht. Ebenfalls nicht übernommen
+  wird der dortige Rückfall auf die letzte bekannte Position: Er löst das
+  Problem veralteter Live-Daten, das bei einer Auswertung im Nachhinein nicht
+  auftritt. Übernommen werden die Extrapolationssperre, die Bereichsprüfung
+  nach der Schleife und das Hörfenster je Track.
 
 - Schallgeschwindigkeit `331,3 + 0,606 · T[°C]` m/s. Als Temperatur dient das
   Mittel aus Bodentemperatur und der Temperatur der nächstgelegenen
   Druckfläche zur Flughöhe; liegen keine Höhenwerte vor, die Bodentemperatur.
   (In 10 km Höhe herrschen −40 °C; mit Bodentemperatur allein ist die
   Laufzeit rund 10 % zu kurz – bei 200 m/s 600 m Positionsfehler, etwa
-  0,5 dB.)
+  0,5 dB.) **Eine feste Schallgeschwindigkeit ist nicht zulässig**, auch nicht
+  als Vorgabewert: Die Referenzimplementierung rechnet mit 343 m/s, dem Wert
+  für 20 °C, und liegt damit über einen Weg aus 10 km Höhe rund 7 % zu kurz –
+  systematisch und entfernungsabhängig, also genau die Art Fehler, die eine
+  Kalibrierung nicht mehr findet.
 - **Es wird nie extrapoliert.** Liegt der gesuchte Abstrahlzeitpunkt außerhalb
   des bekannten Tracks, gibt es keinen Wert.
 
@@ -661,7 +691,7 @@ vorgesehenen Standort im An- und Abflugbereich ist das nicht zu erwarten.
 
 ---
 
-## 16. Verhältnis zu `flightwaves-app-android`
+## 16. Verhältnis zu `flightwaves-app-flutter`
 
 Gleiche fachliche Grundlage, andere Rolle: Die App schätzt mobil und ohne
 Messung, dieses System misst stationär und liefert die Grundlage, um die
@@ -689,7 +719,14 @@ Dämpfungsparametern sollen in die App zurückfließen. Deshalb müssen die
 Parameter in beiden Projekten dieselbe Bedeutung und denselben Bezugspunkt
 (300 m) behalten.
 
-Offener Punkt dort: die Authentifizierung gegen OpenSky (Abschnitt 4).
+Offene Punkte dort:
+
+- die Authentifizierung gegen OpenSky (Abschnitt 4);
+- `solveEmission()` bricht nach vier Durchläufen ab und gibt den letzten
+  Zwischenwert zurück, ohne zu melden, dass er keine Lösung ist
+  (Abschnitt 6). Für die Anzeige der App bleibt der Fehler bei nahen
+  Flugzeugen unter 50 m und ist damit harmlos; die fehlende
+  Konvergenzmeldung ist es nicht, sobald der Löser anderswo verwendet wird.
 
 ---
 
