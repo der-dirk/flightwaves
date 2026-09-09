@@ -39,6 +39,19 @@ def relate(site_lat, site_lon, site_alt_m, lat, lon, alt_m) -> Relation:
     return Relation(horizontal, math.hypot(horizontal, up), elevation)
 
 
+def offset(site_lat, site_lon, east_m, north_m):
+    """Umkehrung zu relate(): lokale Meter zurück in Grad.
+
+    Rechnet mit den Radien auf der Standortbreite statt auf der mittleren –
+    über 50 km sind das rund 0,1 % Abweichung gegenüber relate(), für den
+    Simulator ohne Bedeutung.
+    """
+    m_rad, n_rad = _radii(site_lat)
+    lat = site_lat + math.degrees(north_m / m_rad)
+    lon = site_lon + math.degrees(east_m / (n_rad * math.cos(math.radians(site_lat))))
+    return lat, lon
+
+
 def bounding_box(lat, lon, radius_m):
     """(lamin, lamax, lomin, lomax) um den Standort – begrenzt nur die OpenSky-Abfrage."""
     m_rad, n_rad = _radii(lat)
