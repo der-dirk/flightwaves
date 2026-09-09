@@ -5,7 +5,7 @@ erwartenden Fluglärm prognostiziert und die Prognose gegen eine reale
 akustische Messung prüft. Betrieb an einem festen Standort (Vorgabe, siehe
 Abschnitt 17.2).
 
-Status: Entwurf, Stand 2026-09-09. Ersetzt `development/specifications_draft.md`.
+Status: Entwurf, Stand 2026-09-10. Ersetzt `development/specifications_draft.md`.
 Das Schwesterprojekt `flightwaves-app-flutter` (Mobile-App, gleiche fachliche
 Grundlage) ist in Abschnitt 16 abgegrenzt.
 
@@ -88,6 +88,13 @@ Mikrofon ──► Audio Capture ──┬──► Pegelmessung ──► SQLit
 Die Kette Flugdaten → Prognose läuft unabhängig von der Audio-Kette. Fällt eine
 aus, arbeitet die andere weiter; der Vergleich überspringt Lücken, statt zu
 interpolieren.
+
+Das Schaubild zeigt den Datenfluss, nicht die Prozessgrenzen. Als eigene
+Dienste laufen Flug-Collector, Wetter-Collector und Weboberfläche. Das
+Lärmmodell ist kein vierter: Es rechnet im Flug-Collector, wo Standort,
+Muster und Wetter ohnehin vorliegen, und schreibt `noise_predictions` neben
+der Position. Damit ist die Tabelle ohne Nachlauf aktuell und bleibt trotzdem
+jederzeit neu ableitbar (Abschnitt 6).
 
 **Trennung von Fachlogik und Gerätezugriff.** Das Lärmmodell, die
 Geodatenberechnung und die Laufzeitkorrektur sind reines Python ohne Zugriff
@@ -586,15 +593,32 @@ Standorten in einer gemeinsamen Datenbank sinnvoll.
 
 - **Betriebssystem:** Raspberry Pi OS (Debian, 64 Bit).
 - **Sprache:** Python 3.
-- **Stufe 1.1:** `requests`, `sqlite3`. Kein ORM – bei dieser Zahl von
-  Tabellen ist SQL direkter als eine Abstraktionsschicht darüber.
-- **Stufe 1.2:** `numpy` für die Pegelrechnung; `Flask` und `Leaflet` für die
-  Weboberfläche.
+- **Stufen 1.1 und 1.2: nur die Standardbibliothek.** `sqlite3` für die
+  Datenbank, `urllib` für dump1090, OpenSky und Open-Meteo, `http.server`
+  für die Weboberfläche, `tomllib` für die Konfiguration. Kein ORM – bei
+  dieser Zahl von Tabellen ist SQL direkter als eine Abstraktionsschicht
+  darüber.
+
+  Ursprünglich waren `requests`, `numpy` und `Flask` vorgesehen. Keines davon
+  trägt bei dieser Größe: Ein GET mit JSON sind in `urllib` drei Zeilen, die
+  Pegelrechnung ist Skalarmathematik ohne Felder, und die Oberfläche hat eine
+  Handvoll lesender Endpunkte. Der Gewinn ist handfest – unter Raspberry Pi
+  OS (Bookworm) verweigert `pip` die Installation ins System, und ohne
+  Abhängigkeiten braucht es weder venv noch `apt`-Paketsuche.
+- **Karte:** `Leaflet`, aus dem Netz nachgeladen. Fehlt der Internetzugang im
+  Browser, entfällt die Karte; die Tabellen der Oberfläche arbeiten weiter.
 - **Stufe 2:** ALSA über `sounddevice`, `scipy` für die Terzbandanalyse.
 - **Stufe 3:** `tflite-runtime` (nicht das vollständige TensorFlow).
 
+Ab Stufe 2 sind Abhängigkeiten unvermeidbar; bis dahin bleibt das Gerät ohne.
 `pandas` wird für den Dauerbetrieb nicht benötigt und nur bei Bedarf für die
 Auswertung nachinstalliert.
+
+**Prüfen ohne Hardware.** Ein simulierter Empfänger (`simulate`) erzeugt
+Verkehr um den Standort und liefert ihn im Format von dump1090. Er ersetzt
+keine Abnahme – die Kriterien in Abschnitt 15 meinen den Betrieb am Gerät –,
+macht aber die ganze Kette vom Empfang bis zur Oberfläche ohne Empfänger
+prüfbar.
 
 ---
 

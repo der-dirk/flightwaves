@@ -2,6 +2,7 @@
 
 import csv
 import sqlite3
+from pathlib import Path
 
 # Zeitstempel stehen als ISO-8601 mit "+00:00" in der Datenbank: das ist
 # datetime.isoformat() ohne eigenes Format, lexikografisch sortierbar und
@@ -85,6 +86,17 @@ CREATE INDEX IF NOT EXISTS idx_flights_icao24_last_seen
 """
 
 
+def _ensure_directory(path):
+    """Das Verzeichnis der Datenbank anlegen, falls es fehlt.
+
+    Die Voreinstellung liegt in data/, und das gibt es in einem frischen
+    Klon nicht – ohne diese Zeile scheitert der erste Aufruf mit einer
+    Meldung, die nicht sagt, was fehlt.
+    """
+    if str(path) != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
 def connect(path):
     """Verbindung öffnen, Schema sicherstellen.
 
@@ -92,6 +104,7 @@ def connect(path):
     (Spez. 10). synchronous=NORMAL: bei Stromausfall fehlt höchstens die
     letzte Transaktion, und Lücken sind nach Spez. 13 zulässig.
     """
+    _ensure_directory(path)
     conn = sqlite3.connect(path, timeout=30.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
@@ -139,6 +152,7 @@ def build_aircraft_db(csv_path, out_path):
     Bestand in assets/ trägt dort seinen Herkunftsnachweis, und eine
     ICAO24-Kennung beginnt nie mit einem Rautezeichen.
     """
+    _ensure_directory(out_path)
     conn = sqlite3.connect(out_path)
     conn.execute("DROP TABLE IF EXISTS aircraft")
     conn.execute("CREATE TABLE aircraft (icao24 TEXT PRIMARY KEY, type_designator TEXT NOT NULL)")
