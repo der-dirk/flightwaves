@@ -40,6 +40,27 @@ CREATE TABLE IF NOT EXISTS flight_positions (
     CHECK (observed_utc LIKE '%+00:00')
 );
 
+CREATE TABLE IF NOT EXISTS noise_predictions (
+    id                INTEGER PRIMARY KEY,
+    flight_id         INTEGER NOT NULL REFERENCES flights (id) ON DELETE CASCADE,
+    emitted_utc       TEXT NOT NULL,   -- wann das Flugzeug abgestrahlt hat
+    arrival_utc       TEXT NOT NULL,   -- wann es am Standort ankommt
+    slant_distance_m  REAL NOT NULL,
+    elevation_deg     REAL NOT NULL,
+    level_dba         REAL NOT NULL,
+    category          TEXT NOT NULL,
+    model_version     TEXT NOT NULL,
+    config_hash       TEXT NOT NULL,
+    CHECK (emitted_utc LIKE '%+00:00'),
+    CHECK (arrival_utc LIKE '%+00:00'),
+    -- Abgeleitet, jederzeit neu berechenbar: eine Position hat höchstens
+    -- einen Prognosewert, und die Tabelle hält nur die aktuelle Modellversion.
+    UNIQUE (flight_id, emitted_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_predictions_flight ON noise_predictions (flight_id);
+CREATE INDEX IF NOT EXISTS idx_predictions_arrival ON noise_predictions (arrival_utc);
+
 CREATE TABLE IF NOT EXISTS weather (
     id                  INTEGER PRIMARY KEY,
     observed_utc        TEXT NOT NULL,

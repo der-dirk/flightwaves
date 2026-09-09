@@ -7,12 +7,14 @@ eine eigene Mikrofonmessung prüft.
 Ein Raspberry Pi mit ADS-B-Empfänger und Messmikrofon. Alles läuft lokal: kein
 Server, keine Cloud, keine Nutzerkonten.
 
-**Stand: Stufe 1.1 fertig, Stufe 1.2 begonnen.** Flugtracking, Datenbank,
-Wetterdaten und das Lärmmodell samt Laufzeitkorrektur stehen; die
-Prognosetabelle und die Weboberfläche fehlen noch. Die fachliche
-Grundlage steht vollständig in [`SPECIFICATION.md`](SPECIFICATION.md),
-inklusive Datenmodell, Lärmmodell mit allen Parametern und Abnahmekriterien
-je Stufe.
+**Stand: Stufen 1.1 und 1.2 implementiert.** Flugtracking, Datenbank,
+Wetterdaten, Lärmmodell mit Laufzeitkorrektur, Prognosetabelle und
+Weboberfläche stehen. Was aussteht, ist die Abnahme am Gerät: 72 Stunden
+Dauerbetrieb mit echtem Empfang.
+
+Die fachliche Grundlage steht vollständig in
+[`SPECIFICATION.md`](SPECIFICATION.md), inklusive Datenmodell, Lärmmodell mit
+allen Parametern und Abnahmekriterien je Stufe.
 
 ## Betrieb
 
@@ -23,13 +25,18 @@ cp config.example.toml config.local.toml     # Standort eintragen
 python3 -m flightwaves --config config.local.toml aircraft-db assets/aircraft_types.csv
 python3 -m flightwaves --config config.local.toml collect
 python3 -m flightwaves --config config.local.toml weather  # eigener Dienst
-python3 -m flightwaves --config config.local.toml check    # Abnahme Stufe 1.1
+python3 -m flightwaves --config config.local.toml web      # http://<pi>:8090
+python3 -m flightwaves --config config.local.toml check    # Abnahme 1.1 und 1.2
 python3 -m flightwaves --config config.local.toml predict  # LAmax je Flug
 ```
 
-Im Dauerbetrieb übernehmen das die Units in [`systemd/`](systemd/) – Flug- und
-Wetter-Collector laufen getrennt, damit ein Abruf mit Zeitlimit den 1-Hz-Takt
-der Flugdaten nicht anhält.
+Im Dauerbetrieb übernehmen das die Units in [`systemd/`](systemd/) – Flug-,
+Wetter-Collector und Weboberfläche laufen getrennt, damit ein Abruf mit
+Zeitlimit den 1-Hz-Takt der Flugdaten nicht anhält.
+
+Die Weboberfläche zeigt Karte, Flüge und Prognose und exportiert nach CSV und
+JSON. Sie ist **nur für das lokale Netz** gedacht: kein Login, keine
+Rechteprüfung, also kein Portfreigeben im Router.
 
 Die Wetterdaten sind keine Beigabe: Der Luftdruck korrigiert die
 barometrische Höhe, und die Temperatur auf dem Weg bestimmt die
@@ -80,9 +87,8 @@ Der Port kommt aus `dump1090.url`, es ist also nichts umzustellen:
 ```sh
 python3 -m flightwaves aircraft-db assets/aircraft_types.csv   # einmalig
 python3 -m flightwaves simulate --duration 600 &
-python3 -m flightwaves collect                  # Strg-C zum Beenden
-python3 -m flightwaves check
-python3 -m flightwaves predict
+python3 -m flightwaves collect &                # schreibt Positionen und Prognosen
+python3 -m flightwaves web                      # http://localhost:8090
 ```
 
 Der Verkehr entspricht einem Standort im An- und Abflugbereich eines

@@ -13,6 +13,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 MODEL_VERSION = "1.0"
 NOISE_CLASSES_CSV = Path(__file__).resolve().parent.parent / "assets" / "noise_classes.csv"
@@ -118,6 +119,32 @@ class Model:
             if level_dba < threshold:
                 return name
         return self.category_above
+
+
+class Prediction(NamedTuple):
+    """Ein Prognosewert zu einer Position."""
+
+    arrival_utc: object
+    level_dba: float
+    category: str
+
+
+def predict(model, noise_class, slant_distance_m, elevation_deg, vertical_rate_ms,
+            emitted_utc, temperature_c):
+    """Pegel, Kategorie und Ankunftszeit zu einer Position.
+
+    Die eine Rechenstelle für Collector und Neuberechnung – zwei Pfade für
+    dieselbe Größe wären zwei Gelegenheiten, verschieden falsch zu liegen.
+    Gibt None zurück, wenn die Klasse keinen Referenzpegel hat.
+    """
+    level = model.level_dba(noise_class, slant_distance_m, elevation_deg, vertical_rate_ms)
+    if level is None:
+        return None
+    return Prediction(
+        arrival_utc=arrival_utc(emitted_utc, slant_distance_m, temperature_c),
+        level_dba=level,
+        category=model.category(level),
+    )
 
 
 def combine_dba(levels):

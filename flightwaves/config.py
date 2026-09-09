@@ -35,6 +35,14 @@ DEFAULTS = {
         # rund 240 m Höhenfehler, mehr als die Standardatmosphäre danebenliegt.
         "max_qnh_age_seconds": 10800,
     },
+    "web": {
+        # Nur im lokalen Netz erreichbar, ohne Login – und deshalb nie ins
+        # Internet zu exponieren (Spez. 14).
+        "host": "0.0.0.0",
+        "port": 8090,
+        "live_seconds": 60,      # so lange gilt ein Flugzeug als in Reichweite
+        "track_seconds": 600,    # so weit reicht die gezeichnete Spur zurück
+    },
     "database": {"path": "data/flightwaves.db", "aircraft_path": "data/aircraft_database.sqlite"},
     "logging": {"level": "INFO"},
 }

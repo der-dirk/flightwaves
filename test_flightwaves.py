@@ -36,6 +36,7 @@ from flightwaves.sources import (
     parse_open_meteo,
     parse_states,
 )
+from flightwaves.web import current_aircraft, export_rows, loudest_flights
 
 SITE = {"latitude_deg": 50.0, "longitude_deg": 8.0, "elevation_m": 100.0,
         "geoid_undulation_m": 47.0}
@@ -430,7 +431,7 @@ def test_qnh_korrigiert_die_barometrische_hoehe_nur_solange_er_frisch_ist():
         "INSERT INTO weather (observed_utc, level_m, pressure_msl_hpa, source)"
         " VALUES (?, 0, 1023.25, 'test')", (frisch,)
     )
-    track.refresh_qnh()
+    track.refresh_weather()
     assert track.qnh_hpa == 1023.25
 
     # Nur barometrisch gemeldet: 10 hPa über Normal sind rund 80 m mehr.
@@ -440,7 +441,7 @@ def test_qnh_korrigiert_die_barometrische_hoehe_nur_solange_er_frisch_ist():
 
     track.conn.execute("UPDATE weather SET observed_utc = ?",
                        ((datetime.now(UTC) - timedelta(days=2)).isoformat(),))
-    track.refresh_qnh()
+    track.refresh_weather()
     assert track.qnh_hpa is None      # veraltet ist schlechter als keiner
 
 
@@ -464,3 +465,46 @@ def test_bodenwerte_und_druckflaechen_finden_zusammen():
     assert temperature_for(boden, flaechen, moment, 5600) == (17.4 - 20.4) / 2
     # Ohne alles der sichtbare Platzhalter.
     assert temperature_for([], [], moment, 5600) == 15.0
+
+
+# --- Weboberfläche ---------------------------------------------------------
+
+def test_weboberflaeche_liefert_was_abschnitt_14_verlangt():
+    """Karte, Flüge und Prognose – Entfernung, Höhe, Pegel und Kategorie."""
+    track = tracker()
+    flights, ground = scenario(5, 600, 50000), ground_traffic(5)
+    jitter, now = random.Random(5), time.time()
+    for step in range(15):
+        payload = snapshot(SITE, flights, ground, 300 + step, now + step, jitter)
+        track.ingest(parse_dump1090(payload))
+
+    flugzeuge = current_aircraft(track.conn, live_seconds=120, track_seconds=600)
+    assert flugzeuge
+    eines = flugzeuge[0]
+    assert {"latitude", "longitude", "altitude_m", "slant_distance_m", "elevation_deg",
+            "level_dba", "category", "callsign", "aircraft_type", "track"} <= set(eines)
+    assert len(eines["track"]) > 1                      # Spur, nicht nur ein Punkt
+
+    lauteste = loudest_flights(track.conn, hours=6)
+    assert lauteste
+    pegel = [flug["level_dba"] for flug in lauteste]
+    assert pegel == sorted(pegel, reverse=True)         # lauteste zuerst
+    # Je Flug genau eine Zeile: der LAmax ist das Maximum der Zeitreihe.
+    assert len({flug["flight_id"] for flug in lauteste}) == len(lauteste)
+
+    zeilen = export_rows(track.conn, hours=6)
+    assert {"icao24", "noise_class", "predicted_lamax_dba", "category",
+            "slant_distance_m", "arrival_utc"} <= set(zeilen[0])
+
+
+def test_stille_klassen_erscheinen_ohne_prognose_statt_gar_nicht():
+    """Ein Segelflugzeug wird gezeigt, bekommt aber keinen Ersatzpegel."""
+    track = tracker()
+    track.state["3c6444"] = None
+    track.ingest([at(0)])
+    (zustand,) = [s for s in track.state.values() if s]
+    zustand.noise_class = "unpowered"
+    track.ingest([at(1)])
+
+    ohne = [f for f in current_aircraft(track.conn, 120, 600) if f["level_dba"] is None]
+    assert ohne, "die Position muss sichtbar bleiben, nur ohne Prognose"

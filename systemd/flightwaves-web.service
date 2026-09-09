@@ -1,0 +1,18 @@
+# Nach /etc/systemd/system/ kopieren, Pfade und Benutzer anpassen:
+#   sudo systemctl enable --now flightwaves-web
+#
+# Nur im lokalen Netz erreichbar, ohne Login – deshalb kein Portfreigeben
+# im Router (Spez. 14).
+[Unit]
+Description=FlightWaves Weboberfläche
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/flightwaves
+ExecStart=/usr/bin/python3 -m flightwaves --config config.local.toml web
+Restart=always
+RestartSec=10
+User=flightwaves
+
+[Install]
+WantedBy=multi-user.target
