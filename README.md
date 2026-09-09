@@ -91,15 +91,14 @@ Der Port kommt aus `dump1090.url`, es ist also nichts umzustellen:
 
 ```sh
 cp config.example.toml config.local.toml        # einmalig, Standort eintragen
-python3 -m flightwaves aircraft-db assets/aircraft_types.csv   # einmalig
-python3 -m flightwaves simulate --duration 600 &
-python3 -m flightwaves collect &                # schreibt Positionen und Prognosen
-python3 -m flightwaves web                      # http://localhost:8090
+export FW="--config config.local.toml"
+python3 -m flightwaves $FW aircraft-db assets/aircraft_types.csv   # einmalig
+python3 -m flightwaves $FW simulate --duration 600 &
+python3 -m flightwaves $FW collect &            # schreibt Positionen und Prognosen
+python3 -m flightwaves $FW web                  # http://localhost:8090
 ```
 
-Ohne `--config` sucht jeder Aufruf `config.toml`; die Beispiele oben setzen
-voraus, dass du `config.local.toml` angelegt und `--config config.local.toml`
-angehängt hast.
+Ohne `--config` sucht jeder Aufruf `config.toml`.
 
 Der Verkehr entspricht einem Standort im An- und Abflugbereich eines
 Drehkreuzes: 20–40 Flugzeuge gleichzeitig, Anflüge, Abflüge, Überflüge in
