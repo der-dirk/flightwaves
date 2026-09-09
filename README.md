@@ -167,7 +167,7 @@ nichts einen Verstoß.
 
 ## Schwesterprojekt
 
-[`flightwaves-app-android`](https://github.com/der-dirk/flightwaves-app-android)
+[`flightwaves-app-flutter`](https://github.com/der-dirk/flightwaves-app-flutter)
 ist eine Mobile-App auf derselben fachlichen Grundlage: Sie schätzt mobil und
 ohne Messung. Lärmmodell, Referenzpegel, Stammdaten und Laufzeitkorrektur
 werden von dort übernommen; die hier gemessenen Korrekturen sollen dorthin

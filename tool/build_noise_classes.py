@@ -27,7 +27,7 @@ B757, die Doc 8643 als M führt) – genau deshalb steht Ebene 1 obenauf.
 import csv
 import sys
 
-# --- Ebene 1: kuratiert, aus flightwaves-app-android ---------------------
+# --- Ebene 1: kuratiert, aus flightwaves-app-flutter ---------------------
 CURATED = {
     "heavyJet": """A124 A306 A310 A332 A333 A337 A338 A339 A342 A343 A345 A346
         A359 A35K A388 B742 B743 B744 B748 B74F B752 B753 B762 B763 B764 B772
@@ -126,7 +126,7 @@ def main(argv):
             "#\n"
             "# Erzeugt mit tool/build_noise_classes.py.\n"
             f"# Ebene 1 kuratiert: {len(_spread(CURATED))} Verkehrsflugzeuge "
-            "aus flightwaves-app-android\n"
+            "aus flightwaves-app-flutter\n"
             f"# Ebene 2 Sammelkürzel: {len(_spread(OVERRIDES))}\n"
             f"# Ebene 3 Doc 8643 ({source}): der Rest\n"
             f"# Einträge: {len(classes)}\n"

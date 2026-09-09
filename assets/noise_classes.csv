@@ -1,7 +1,7 @@
 # FlightWaves – Lärmklassen (ICAO-Typenkürzel -> Klasse)
 #
 # Erzeugt mit tool/build_noise_classes.py.
-# Ebene 1 kuratiert: 168 Verkehrsflugzeuge aus flightwaves-app-android
+# Ebene 1 kuratiert: 168 Verkehrsflugzeuge aus flightwaves-app-flutter
 # Ebene 2 Sammelkürzel: 44
 # Ebene 3 Doc 8643 (.work/doc8643.csv): der Rest
 # Einträge: 2730
