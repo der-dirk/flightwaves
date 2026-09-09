@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 from . import db
 from .geo import altitude_msl, bounding_box, relate
-from .sources import OpenSky, read_dump1090
+from .sources import OpenSky, read_dump1090, read_open_meteo
 
 LOG = logging.getLogger(__name__)
 FAILURE_STREAK = 5      # Erst wiederholte Fehlschläge werden gemeldet (Spez. 13)
@@ -39,11 +39,14 @@ class Tracker:
         self.site = cfg["site"]
         self.tracking = cfg["tracking"]
         self.grace_seconds = cfg["opensky"]["local_grace_seconds"]
+        self.max_qnh_age_s = cfg["weather"]["max_qnh_age_seconds"]
+        self.qnh_hpa = None
         self.lookup_type = lookup_type
         self.state: dict[str, _State] = {}
         self.stored = 0
         self.dropped_ground = 0
         self._recover_open_flights()
+        self.refresh_qnh()
 
     def _recover_open_flights(self):
         """Laufende Flüge nach einem Neustart weiterführen, statt sie zu zerschneiden.
@@ -68,6 +71,24 @@ class Tracker:
         if rows:
             LOG.info("%d laufende Flüge übernommen", len(rows))
 
+    def refresh_qnh(self):
+        """Jüngsten Bodendruck übernehmen, sofern er nicht zu alt ist (Spez. 4).
+
+        Er korrigiert die barometrische Höhe, die eine Druckhöhe der
+        Standardatmosphäre ist. Ein veralteter Wert ist schlechter als keiner:
+        30 hPa Abweichung sind rund 240 m Höhenfehler.
+        """
+        row = self.conn.execute(
+            "SELECT observed_utc, pressure_msl_hpa FROM weather"
+            " WHERE level_m = 0 AND pressure_msl_hpa IS NOT NULL"
+            " ORDER BY observed_utc DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            self.qnh_hpa = None
+            return
+        alter = (datetime.now(UTC) - datetime.fromisoformat(row["observed_utc"])).total_seconds()
+        self.qnh_hpa = row["pressure_msl_hpa"] if alter <= self.max_qnh_age_s else None
+
     def ingest(self, positions):
         """Meldungen verarbeiten. Gibt die Zahl gespeicherter Positionen zurück."""
         rows, touched, stored = [], {}, 0
@@ -80,7 +101,10 @@ class Tracker:
                 continue
 
             altitude = altitude_msl(
-                pos.geom_altitude_m, pos.baro_altitude_m, self.site["geoid_undulation_m"]
+                pos.geom_altitude_m,
+                pos.baro_altitude_m,
+                self.site["geoid_undulation_m"],
+                self.qnh_hpa,
             )
             if altitude is None:
                 continue        # ohne Höhe keine Schrägentfernung
@@ -276,6 +300,7 @@ def run(cfg):
 
         if time.monotonic() >= next_report:
             tracker.forget_stale()
+            tracker.refresh_qnh()
             LOG.info(
                 "%d Positionen gespeichert, %d Flüge im Blick, %d Bodenziele verworfen",
                 tracker.stored,
@@ -288,3 +313,81 @@ def run(cfg):
 
     conn.close()
     LOG.info("Collector beendet, %d Positionen in dieser Sitzung", tracker.stored)
+
+
+def store_weather(conn, rows):
+    """Wetterzeilen ablegen. Derselbe Abruf zweimal ist kein neuer Wert."""
+    cursor = conn.executemany(
+        "INSERT OR IGNORE INTO weather (observed_utc, level_m, wind_direction_deg,"
+        " wind_speed_ms, temperature_c, humidity_pct, pressure_msl_hpa, source)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        [
+            (
+                row.observed.isoformat(),
+                row.level_m,
+                row.wind_direction_deg,
+                row.wind_speed_ms,
+                row.temperature_c,
+                row.humidity_pct,
+                row.pressure_msl_hpa,
+                row.source,
+            )
+            for row in rows
+        ],
+    )
+    return cursor.rowcount
+
+
+def _zahl(wert, einheit):
+    return "     –" if wert is None else f"{wert:6.1f} {einheit}"
+
+
+def run_weather(cfg, once=False):
+    """Wetterdaten im 15-Minuten-Takt sammeln (Spez. 5).
+
+    Eigener Dienst neben dem Flug-Collector: Ein Abruf mit 15 s Zeitlimit darf
+    den 1-Hz-Takt der Flugdaten nicht anhalten.
+    """
+    conn = db.connect(cfg["database"]["path"])
+    site, weather = cfg["site"], cfg["weather"]
+
+    stop = threading.Event()
+    if not once:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, lambda *_: stop.set())
+
+    failures = 0
+    while True:
+        try:
+            rows = read_open_meteo(
+                site["latitude_deg"], site["longitude_deg"], weather["timeout_seconds"]
+            )
+            gespeichert = store_weather(conn, rows)
+            if failures >= FAILURE_STREAK:
+                LOG.info("Wetterdienst wieder erreichbar")
+            failures = 0
+            LOG.info("%d Niveaus abgerufen, %d neu gespeichert", len(rows), gespeichert)
+            if once:
+                # Einmallauf ist auch der Prüflauf gegen die echte Schnittstelle:
+                # zeigt, ob jedes Feld ankommt oder nur die Zeile.
+                for row in rows:
+                    print(
+                        f"  {row.level_m:>7.0f} m  {row.observed:%Y-%m-%d %H:%M}Z  "
+                        f"{_zahl(row.temperature_c, '°C')}  "
+                        f"{_zahl(row.wind_speed_ms, 'm/s')}  "
+                        f"{_zahl(row.wind_direction_deg, '°')}  "
+                        f"{_zahl(row.humidity_pct, '%')}  "
+                        f"{_zahl(row.pressure_msl_hpa, 'hPa')}"
+                    )
+                if not any(row.level_m == 0 for row in rows):
+                    LOG.warning("Keine Bodenwerte – ohne sie gibt es keinen QNH")
+        except Exception as error:
+            failures += 1
+            if failures == FAILURE_STREAK:
+                LOG.warning("Wetterdienst seit %d Abrufen gestört: %s", failures, error)
+            elif once:
+                raise
+        if once or stop.wait(weather["poll_interval_seconds"]):
+            break
+
+    conn.close()

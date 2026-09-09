@@ -1,6 +1,7 @@
-"""Kommandozeile: python3 -m flightwaves <collect|check|aircraft-db|simulate>."""
+"""Kommandozeile: python3 -m flightwaves <collect|weather|check|predict|...>."""
 
 import argparse
+import bisect
 import logging
 from datetime import datetime
 
@@ -16,6 +17,8 @@ def main(argv=None):
     parser.add_argument("--config", default="config.toml", help="Konfigurationsdatei")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("collect", help="Flugdaten dauerhaft aufzeichnen")
+    wetter = sub.add_parser("weather", help="Wetterdaten dauerhaft aufzeichnen")
+    wetter.add_argument("--once", action="store_true", help="einmal abrufen und beenden")
     sub.add_parser("check", help="Abnahmekriterien der Stufe 1.1 prüfen")
     sub.add_parser("predict", help="LAmax je Flug aus den Positionen rechnen")
     build = sub.add_parser("aircraft-db", help="Stammdatenbank aus einer CSV bauen")
@@ -33,6 +36,8 @@ def main(argv=None):
 
     if args.command == "collect":
         collector.run(cfg)
+    elif args.command == "weather":
+        collector.run_weather(cfg, once=args.once)
     elif args.command == "check":
         return check(cfg)
     elif args.command == "predict":
@@ -45,6 +50,48 @@ def main(argv=None):
     return 0
 
 
+def weather_series(conn):
+    """Wetterwerte als zwei Zeitreihen: Boden und Druckflächen.
+
+    Getrennt, weil sie verschiedene Zeitstempel tragen: Open-Meteo liefert
+    Bodenwerte zum Abrufzeitpunkt und Druckflächen stündlich. Nach
+    Zeitstempel gruppiert kämen beide nie zusammen – und die Wegtemperatur
+    ist gerade das Mittel aus ihnen (Spez. 6).
+    """
+    boden, flaechen = [], {}
+    for row in conn.execute(
+        "SELECT observed_utc, level_m, temperature_c FROM weather ORDER BY observed_utc"
+    ):
+        moment = datetime.fromisoformat(row["observed_utc"])
+        if row["level_m"] == 0:
+            boden.append((moment, row["temperature_c"]))
+        else:
+            flaechen.setdefault(moment, []).append((row["level_m"], row["temperature_c"]))
+    return boden, sorted(flaechen.items())
+
+
+def nearest(entries, moment):
+    """Der zeitlich nächste Eintrag, oder None."""
+    if not entries:
+        return None
+    index = bisect.bisect_left(entries, moment, key=lambda eintrag: eintrag[0])
+    nachbarn = [entries[i] for i in (index - 1, index) if 0 <= i < len(entries)]
+    return min(nachbarn, key=lambda eintrag: abs((eintrag[0] - moment).total_seconds()))[1]
+
+
+def temperature_for(boden, flaechen, moment, altitude_m):
+    """Wegtemperatur aus den zeitlich nächsten Werten.
+
+    Ohne jede Wetterdaten bleibt der Platzhalter – sichtbar, statt als
+    stiller Vorgabewert (Spez. 6).
+    """
+    bodenwert = nearest(boden, moment)
+    hoehenwerte = nearest(flaechen, moment) or []
+    if bodenwert is None and not hoehenwerte:
+        return noise.PLACEHOLDER_TEMPERATURE_C
+    return noise.path_temperature_c(bodenwert, hoehenwerte, altitude_m)
+
+
 def predict(cfg):
     """LAmax je Flug aus den gespeicherten Positionen (Spez. 6).
 
@@ -54,6 +101,7 @@ def predict(cfg):
     """
     conn = db.connect(cfg["database"]["path"])
     model, classes, site = noise.Model(), noise.noise_classes(), cfg["site"]
+    boden, flaechen = weather_series(conn)
 
     lauteste = {}
     for row in conn.execute(
@@ -71,16 +119,13 @@ def predict(cfg):
         )
         if pegel is None:
             continue        # unpowered, notAircraft: keine Prognose
+        beobachtet = datetime.fromisoformat(row["observed_utc"])
+        temperatur = temperature_for(boden, flaechen, beobachtet, row["altitude_m"])
         bisher = lauteste.get(row["id"])
         if bisher is None or pegel > bisher[0]:
             lauteste[row["id"]] = (
                 pegel, klasse, row["callsign"], row["aircraft_type"], lage.slant_m,
-                noise.arrival_utc(
-                    datetime.fromisoformat(row["observed_utc"]),
-                    lage.slant_m,
-                    # Platzhalter: der Wetter-Collector der Stufe 1.2 ersetzt ihn.
-                    noise.PLACEHOLDER_TEMPERATURE_C,
-                ),
+                noise.arrival_utc(beobachtet, lage.slant_m, temperatur),
             )
 
     if not lauteste:
@@ -88,6 +133,11 @@ def predict(cfg):
         return 1
 
     print(f"Modell {noise.MODEL_VERSION}, Konfiguration {model.config_hash()}")
+    print(
+        f"Wetter: {len(boden)} Bodenwerte, {len(flaechen)} Höhenprofile"
+        if boden or flaechen
+        else f"Keine Wetterdaten – Laufzeit mit {noise.PLACEHOLDER_TEMPERATURE_C:.0f} °C gerechnet"
+    )
     print(f"{len(lauteste)} Flüge, lauteste zuerst\n")
     print("  Rufzeichen  Muster Klasse       LAmax  Kategorie     Abstand  Ankunft")
     for pegel, klasse, rufzeichen, muster, abstand, ankunft in sorted(

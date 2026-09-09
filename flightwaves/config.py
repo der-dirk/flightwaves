@@ -27,6 +27,14 @@ DEFAULTS = {
         "local_grace_seconds": 30,
         "timeout_seconds": 15.0,
     },
+    "weather": {
+        "enabled": True,
+        "poll_interval_seconds": 900,
+        "timeout_seconds": 15.0,
+        # Ein veralteter QNH ist schlechter als keiner: 30 hPa Abweichung sind
+        # rund 240 m Höhenfehler, mehr als die Standardatmosphäre danebenliegt.
+        "max_qnh_age_seconds": 10800,
+    },
     "database": {"path": "data/flightwaves.db", "aircraft_path": "data/aircraft_database.sqlite"},
     "logging": {"level": "INFO"},
 }

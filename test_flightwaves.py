@@ -10,13 +10,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from flightwaves import db
-from flightwaves.collector import Tracker
+from flightwaves.__main__ import temperature_for, weather_series
+from flightwaves.collector import Tracker, store_weather
 from flightwaves.geo import altitude_msl, relate
 from flightwaves.noise import (
     Model,
     arrival_utc,
     combine_dba,
     noise_classes,
+    path_temperature_c,
     speed_of_sound_ms,
     travel_time_s,
 )
@@ -28,7 +30,12 @@ from flightwaves.simulate import (
     scenario,
     snapshot,
 )
-from flightwaves.sources import Position, parse_dump1090, parse_states
+from flightwaves.sources import (
+    Position,
+    parse_dump1090,
+    parse_open_meteo,
+    parse_states,
+)
 
 SITE = {"latitude_deg": 50.0, "longitude_deg": 8.0, "elevation_m": 100.0,
         "geoid_undulation_m": 47.0}
@@ -37,6 +44,7 @@ CFG = {
     "tracking": {"radius_m": 50000, "fine_sampling_radius_m": 20000,
                  "coarse_sampling_seconds": 5, "flight_gap_seconds": 600},
     "opensky": {"local_grace_seconds": 30},
+    "weather": {"max_qnh_age_seconds": 10800},
 }
 # Nahe der Wanduhr, weil der Collector laufende Flüge gegen "jetzt" wiederaufnimmt.
 T0 = datetime.now(UTC).replace(microsecond=0)
@@ -340,3 +348,119 @@ def test_kategorien_und_klassentabelle():
     klassen = noise_classes()
     assert klassen["A320"] == "mediumJet" and klassen["B77W"] == "heavyJet"
     assert klassen["GLID"] == "unpowered" and klassen["C172"] == "lightPiston"
+
+
+# --- Wetter ----------------------------------------------------------------
+
+OPEN_METEO = {
+    "current": {
+        "time": "2026-09-09T19:30",
+        "temperature_2m": 17.4,
+        "relative_humidity_2m": 71,
+        "pressure_msl": 1019.3,
+        "wind_speed_10m": 3.6,
+        "wind_direction_10m": 245,
+    },
+    "hourly": {
+        "time": ["2026-09-09T18:00", "2026-09-09T19:00", "2026-09-09T20:00"],
+        "temperature_850hPa": [8.1, 7.9, 7.6],
+        "wind_speed_850hPa": [11.2, 11.8, 12.0],
+        "wind_direction_850hPa": [250, 252, 255],
+        "geopotential_height_850hPa": [1490.0, 1488.0, 1486.0],
+        "temperature_700hPa": [-2.4, -2.6, -2.9],
+        "wind_speed_700hPa": [15.0, 15.4, 15.9],
+        "wind_direction_700hPa": [262, 264, 266],
+        "geopotential_height_700hPa": [3080.0, 3078.0, 3075.0],
+        "temperature_500hPa": [-19.8, -20.1, -20.4],
+        "wind_speed_500hPa": [24.1, 24.6, 25.0],
+        "wind_direction_500hPa": [271, 272, 274],
+        "geopotential_height_500hPa": [5620.0, 5617.0, 5613.0],
+    },
+}
+
+
+def test_open_meteo_liefert_boden_und_die_drei_druckflaechen():
+    jetzt = datetime(2026, 9, 9, 19, 40, tzinfo=UTC)
+    zeilen = parse_open_meteo(OPEN_METEO, jetzt)
+
+    boden = zeilen[0]
+    assert boden.level_m == 0.0
+    assert (boden.temperature_c, boden.pressure_msl_hpa) == (17.4, 1019.3)
+    assert (boden.wind_speed_ms, boden.wind_direction_deg) == (3.6, 245)
+    assert boden.observed.tzinfo is UTC          # Open-Meteo nennt keine Zone
+
+    # Die Druckflächen kommen stündlich; genommen wird die nächstliegende
+    # Stunde, nicht die zuletzt vergangene.
+    assert [z.level_m for z in zeilen[1:]] == [1486.0, 3075.0, 5613.0]      # 20 Uhr
+    frueher = parse_open_meteo(OPEN_METEO, datetime(2026, 9, 9, 19, 20, tzinfo=UTC))
+    assert [z.level_m for z in frueher[1:]] == [1488.0, 3078.0, 5617.0]     # 19 Uhr
+    assert [z.temperature_c for z in frueher[1:]] == [7.9, -2.6, -20.1]
+    # Feuchte und Luftdruck gibt es nur am Boden.
+    assert all(z.humidity_pct is None and z.pressure_msl_hpa is None for z in zeilen[1:])
+
+
+def test_druckflaeche_ohne_hoehe_wird_uebersprungen():
+    """Ohne geopotentielle Höhe hat die Druckfläche keinen Ort."""
+    payload = {"current": {}, "hourly": dict(OPEN_METEO["hourly"])}
+    payload["hourly"]["geopotential_height_700hPa"] = [None, None, None]
+    hoehen = [z.level_m for z in parse_open_meteo(payload, datetime(2026, 9, 9, 19, 0, tzinfo=UTC))]
+    assert hoehen == [1488.0, 5617.0]
+
+
+def test_derselbe_abruf_zweimal_erzeugt_keine_zweite_zeile():
+    conn = db.connect(":memory:")
+    zeilen = parse_open_meteo(OPEN_METEO, datetime(2026, 9, 9, 19, 40, tzinfo=UTC))
+    assert store_weather(conn, zeilen) == 4
+    store_weather(conn, zeilen)
+    assert conn.execute("SELECT COUNT(*) FROM weather").fetchone()[0] == 4
+
+
+def test_wegtemperatur_mittelt_boden_und_naechste_druckflaeche():
+    flaechen = [(1488.0, 7.9), (3078.0, -2.6), (5617.0, -20.1)]
+    assert path_temperature_c(17.4, flaechen, 1400) == (17.4 + 7.9) / 2
+    assert path_temperature_c(17.4, flaechen, 5000) == (17.4 - 20.1) / 2
+    assert path_temperature_c(17.4, [], 5000) == 17.4          # ohne Höhenwerte
+    assert path_temperature_c(None, flaechen, 3000) == -2.6
+
+
+def test_qnh_korrigiert_die_barometrische_hoehe_nur_solange_er_frisch_ist():
+    track = tracker()
+    frisch = datetime.now(UTC).isoformat()
+    track.conn.execute(
+        "INSERT INTO weather (observed_utc, level_m, pressure_msl_hpa, source)"
+        " VALUES (?, 0, 1023.25, 'test')", (frisch,)
+    )
+    track.refresh_qnh()
+    assert track.qnh_hpa == 1023.25
+
+    # Nur barometrisch gemeldet: 10 hPa über Normal sind rund 80 m mehr.
+    track.ingest([at(0)._replace(geom_altitude_m=None, baro_altitude_m=1000.0)])
+    (zeile,) = stored(track)
+    assert abs(zeile["altitude_m"] - 1080.0) < 1e-6
+
+    track.conn.execute("UPDATE weather SET observed_utc = ?",
+                       ((datetime.now(UTC) - timedelta(days=2)).isoformat(),))
+    track.refresh_qnh()
+    assert track.qnh_hpa is None      # veraltet ist schlechter als keiner
+
+
+def test_bodenwerte_und_druckflaechen_finden_zusammen():
+    """Sie tragen verschiedene Zeitstempel und dürfen trotzdem nicht getrennt bleiben.
+
+    Open-Meteo liefert Bodenwerte zum Abrufzeitpunkt, Druckflächen stündlich.
+    Nach Zeitstempel gruppiert käme die Wegtemperatur nie zustande – sie ist
+    gerade das Mittel aus beiden.
+    """
+    conn = db.connect(":memory:")
+    zeilen = parse_open_meteo(OPEN_METEO, datetime(2026, 9, 9, 19, 40, tzinfo=UTC))
+    store_weather(conn, zeilen)
+    boden, flaechen = weather_series(conn)
+    assert len(boden) == 1 and len(flaechen) == 1
+
+    moment = datetime(2026, 9, 9, 19, 35, tzinfo=UTC)
+    # In 1,5 km Höhe: Mittel aus 17,4 °C am Boden und 7,6 °C auf 850 hPa.
+    assert temperature_for(boden, flaechen, moment, 1500) == (17.4 + 7.6) / 2
+    # In Reiseflughöhe zählt die 500-hPa-Fläche.
+    assert temperature_for(boden, flaechen, moment, 5600) == (17.4 - 20.4) / 2
+    # Ohne alles der sichtbare Platzhalter.
+    assert temperature_for([], [], moment, 5600) == 15.0

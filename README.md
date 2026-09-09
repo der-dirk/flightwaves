@@ -7,9 +7,9 @@ eine eigene Mikrofonmessung prüft.
 Ein Raspberry Pi mit ADS-B-Empfänger und Messmikrofon. Alles läuft lokal: kein
 Server, keine Cloud, keine Nutzerkonten.
 
-**Stand: Stufe 1.1 fertig, Stufe 1.2 begonnen.** Flugtracking und Datenbank
-stehen, ebenso das Lärmmodell samt Laufzeitkorrektur; Wetterdaten und
-Weboberfläche fehlen noch. Die fachliche
+**Stand: Stufe 1.1 fertig, Stufe 1.2 begonnen.** Flugtracking, Datenbank,
+Wetterdaten und das Lärmmodell samt Laufzeitkorrektur stehen; die
+Prognosetabelle und die Weboberfläche fehlen noch. Die fachliche
 Grundlage steht vollständig in [`SPECIFICATION.md`](SPECIFICATION.md),
 inklusive Datenmodell, Lärmmodell mit allen Parametern und Abnahmekriterien
 je Stufe.
@@ -22,11 +22,19 @@ Nur Python 3.11 und die Standardbibliothek, kein `pip install`:
 cp config.example.toml config.local.toml     # Standort eintragen
 python3 -m flightwaves --config config.local.toml aircraft-db assets/aircraft_types.csv
 python3 -m flightwaves --config config.local.toml collect
+python3 -m flightwaves --config config.local.toml weather  # eigener Dienst
 python3 -m flightwaves --config config.local.toml check    # Abnahme Stufe 1.1
 python3 -m flightwaves --config config.local.toml predict  # LAmax je Flug
 ```
 
-Im Dauerbetrieb übernimmt das die Unit in [`systemd/`](systemd/).
+Im Dauerbetrieb übernehmen das die Units in [`systemd/`](systemd/) – Flug- und
+Wetter-Collector laufen getrennt, damit ein Abruf mit Zeitlimit den 1-Hz-Takt
+der Flugdaten nicht anhält.
+
+Die Wetterdaten sind keine Beigabe: Der Luftdruck korrigiert die
+barometrische Höhe, und die Temperatur auf dem Weg bestimmt die
+Schall-Laufzeit. Ohne sie rechnet `predict` mit einem sichtbar
+gekennzeichneten Platzhalter.
 
 ## Flugzeug-Stammdaten
 

@@ -40,6 +40,23 @@ CREATE TABLE IF NOT EXISTS flight_positions (
     CHECK (observed_utc LIKE '%+00:00')
 );
 
+CREATE TABLE IF NOT EXISTS weather (
+    id                  INTEGER PRIMARY KEY,
+    observed_utc        TEXT NOT NULL,
+    level_m             REAL NOT NULL,   -- 0 = Boden, sonst geopotentielle Höhe
+    wind_direction_deg  REAL,            -- meteorologisch: woher der Wind weht
+    wind_speed_ms       REAL,
+    temperature_c       REAL,
+    humidity_pct        REAL,            -- nur am Boden
+    pressure_msl_hpa    REAL,            -- nur am Boden; QNH für die Höhenkorrektur
+    source              TEXT NOT NULL,
+    CHECK (observed_utc LIKE '%+00:00'),
+    UNIQUE (observed_utc, level_m)       -- derselbe Abruf zweimal ist kein neuer Wert
+);
+
+CREATE INDEX IF NOT EXISTS idx_weather_level_time
+    ON weather (level_m, observed_utc);
+
 CREATE INDEX IF NOT EXISTS idx_positions_flight_time
     ON flight_positions (flight_id, observed_utc);
 CREATE INDEX IF NOT EXISTS idx_flights_icao24_last_seen
