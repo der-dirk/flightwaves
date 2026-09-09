@@ -7,7 +7,9 @@ eine eigene Mikrofonmessung prüft.
 Ein Raspberry Pi mit ADS-B-Empfänger und Messmikrofon. Alles läuft lokal: kein
 Server, keine Cloud, keine Nutzerkonten.
 
-**Stand: Stufe 1.1 (Flugtracking, Datenbank) implementiert.** Die fachliche
+**Stand: Stufe 1.1 fertig, Stufe 1.2 begonnen.** Flugtracking und Datenbank
+stehen, ebenso das Lärmmodell samt Laufzeitkorrektur; Wetterdaten und
+Weboberfläche fehlen noch. Die fachliche
 Grundlage steht vollständig in [`SPECIFICATION.md`](SPECIFICATION.md),
 inklusive Datenmodell, Lärmmodell mit allen Parametern und Abnahmekriterien
 je Stufe.
@@ -21,6 +23,7 @@ cp config.example.toml config.local.toml     # Standort eintragen
 python3 -m flightwaves --config config.local.toml aircraft-db assets/aircraft_types.csv
 python3 -m flightwaves --config config.local.toml collect
 python3 -m flightwaves --config config.local.toml check    # Abnahme Stufe 1.1
+python3 -m flightwaves --config config.local.toml predict  # LAmax je Flug
 ```
 
 Im Dauerbetrieb übernimmt das die Unit in [`systemd/`](systemd/).
@@ -71,6 +74,7 @@ python3 -m flightwaves aircraft-db assets/aircraft_types.csv   # einmalig
 python3 -m flightwaves simulate --duration 600 &
 python3 -m flightwaves collect                  # Strg-C zum Beenden
 python3 -m flightwaves check
+python3 -m flightwaves predict
 ```
 
 Der Verkehr entspricht einem Standort im An- und Abflugbereich eines

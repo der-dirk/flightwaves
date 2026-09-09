@@ -1,6 +1,7 @@
 """Prüfungen der Regeln, die nicht offensichtlich sind: python3 -m pytest"""
 
 import csv
+import math
 import random
 import sqlite3
 import time
@@ -11,6 +12,14 @@ import pytest
 from flightwaves import db
 from flightwaves.collector import Tracker
 from flightwaves.geo import altitude_msl, relate
+from flightwaves.noise import (
+    Model,
+    arrival_utc,
+    combine_dba,
+    noise_classes,
+    speed_of_sound_ms,
+    travel_time_s,
+)
 from flightwaves.simulate import (
     CEILING_M,
     FLOOR_M,
@@ -253,3 +262,81 @@ def test_simulator_nimmt_echte_kennungen_aus_dem_bestand():
 
     for flight in scenario(4, 600, 50000, register)[:20]:
         assert flight.icao24 in register[flight.aircraft_type]
+
+
+# --- Lärmmodell ------------------------------------------------------------
+
+def test_abnahmekriterium_der_stufe_1_2():
+    """mediumJet, 300 m Schrägentfernung, Reiseschub, >= 20 Grad -> 82 dB(A).
+
+    Der Referenzwert der Spezifikation, exakt und ohne Toleranz: er definiert
+    den Bezugspunkt, den beide Projekte teilen müssen, damit die in Stufe 2.2
+    gewonnenen Korrekturen übertragbar bleiben.
+    """
+    model = Model()
+    assert model.level_dba("mediumJet", 300.0, 20.0, 0.0) == 82.0
+    assert model.level_dba("mediumJet", 300.0, 90.0, 0.0) == 82.0
+    assert len(model.config_hash()) == 12
+
+
+def test_die_fuenf_terme_des_modells():
+    model = Model()
+    ohne_daempfung = dict(elevation_deg=90.0, vertical_rate_ms=0.0)
+
+    # Verdopplung der Entfernung: -6 dB Ausbreitung, dazu die Absorption.
+    nah = model.level_dba("mediumJet", 300.0, **ohne_daempfung)
+    fern = model.level_dba("mediumJet", 600.0, **ohne_daempfung)
+    verdopplung = 20 * math.log10(2)              # 6,0206 dB, nicht glatt 6
+    assert abs((nah - fern) - (verdopplung + 1.5 * 0.3)) < 1e-9
+
+    # Laterale Dämpfung: null ab 20 Grad, voll bei streifendem Einfall.
+    assert model.lateral_attenuation_db(20.0) == 0.0
+    assert model.lateral_attenuation_db(10.0) == 4.0
+    assert model.lateral_attenuation_db(0.0) == 8.0
+    assert model.lateral_attenuation_db(-5.0) == 8.0
+
+    # Schubkorrektur an den Schwellen der Spezifikation.
+    korrektur = model.thrust_correction_db
+    assert [korrektur(v) for v in (6, 5, 3, 2, 0, -2, -5, -6, -9)] == [
+        6.0, 6.0, 4.0, 4.0, 0.0, -2.0, -2.0, -3.0, -3.0
+    ]
+
+
+def test_stille_klassen_bekommen_keinen_ersatzpegel():
+    """Ein Segelflugzeug auf 80 dB(A) fallen zu lassen, wäre schlimmer als nichts."""
+    model = Model()
+    assert model.level_dba("unpowered", 500.0, 45.0) is None
+    assert model.level_dba("notAircraft", 500.0, 45.0) is None
+    assert model.level_dba(None, 300.0, 90.0, 0.0) == 80.0        # unbekannt: Ersatzpegel
+    assert model.category(None) is None
+
+
+def test_pegel_werden_energetisch_summiert_nie_gemittelt():
+    assert abs(combine_dba([60.0, 60.0]) - 63.0103) < 1e-4        # nicht 60, nicht 120
+    assert abs(combine_dba([60.0, 40.0]) - 60.0432) < 1e-4        # das leise geht unter
+    assert combine_dba([70.0]) == 70.0
+    assert combine_dba([None, None]) is None
+
+
+def test_ankunftszeit_liegt_um_d_durch_c_nach_der_abstrahlung():
+    emittiert = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
+    assert abs(speed_of_sound_ms(15.0) - 340.39) < 0.01
+    assert abs(travel_time_s(10000, 15.0) - 29.38) < 0.01          # rund 30 s bei 10 km
+
+    angekommen = arrival_utc(emittiert, 10000, 15.0)
+    # timedelta rechnet in Mikrosekunden – feiner geht die Zusicherung nicht,
+    # und feiner braucht es auch niemand: die Laufzeit selbst ist auf Sekunden genau.
+    assert abs((angekommen - emittiert).total_seconds() - travel_time_s(10000, 15.0)) < 1e-6
+
+    # Kältere Luft trägt den Schall langsamer: in 10 km Höhe herrschen -40 Grad.
+    assert travel_time_s(10000, -40.0) > travel_time_s(10000, 15.0) * 1.09
+
+
+def test_kategorien_und_klassentabelle():
+    model = Model()
+    assert [model.category(x) for x in (34.9, 49.9, 61.9, 62.0)] == [
+        "nicht hörbar", "leise", "mittel", "laut"
+    ]
+    klassen = noise_classes()
+    assert klassen["A320"] == "mediumJet" and klassen["B77W"] == "heavyJet"
+    assert klassen["GLID"] == "unpowered" and klassen["C172"] == "lightPiston"
