@@ -74,7 +74,12 @@ muss und die Python-Version dieselbe ist wie auf dem Pi:
 ```sh
 docker compose run --rm dev          # Tests und ruff
 docker compose run --rm dev bash     # Shell im Container
+docker compose run --rm --service-ports dev bash   # zusätzlich Port 8090
 ```
+
+`--service-ports` braucht es nur für die Weboberfläche: `docker compose run`
+veröffentlicht sonst keine Ports, und der Browser käme nicht an den
+Container.
 
 Wer Python 3.11 ohnehin hat, braucht den Container nicht: `python3 -m pytest`.
 
@@ -85,11 +90,16 @@ serviert ihn im Format von dump1090 – der Collector merkt keinen Unterschied.
 Der Port kommt aus `dump1090.url`, es ist also nichts umzustellen:
 
 ```sh
+cp config.example.toml config.local.toml        # einmalig, Standort eintragen
 python3 -m flightwaves aircraft-db assets/aircraft_types.csv   # einmalig
 python3 -m flightwaves simulate --duration 600 &
 python3 -m flightwaves collect &                # schreibt Positionen und Prognosen
 python3 -m flightwaves web                      # http://localhost:8090
 ```
+
+Ohne `--config` sucht jeder Aufruf `config.toml`; die Beispiele oben setzen
+voraus, dass du `config.local.toml` angelegt und `--config config.local.toml`
+angehängt hast.
 
 Der Verkehr entspricht einem Standort im An- und Abflugbereich eines
 Drehkreuzes: 20–40 Flugzeuge gleichzeitig, Anflüge, Abflüge, Überflüge in

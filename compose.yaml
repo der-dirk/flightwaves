@@ -1,5 +1,6 @@
 # Tests und Linter:  docker compose run --rm dev
 # Shell im Container: docker compose run --rm dev bash
+# Mit Weboberfläche:  docker compose run --rm --service-ports dev bash
 #
 # Der Quelltext ist eingehängt, nicht kopiert: Änderungen wirken sofort,
 # ohne neuen Build.
@@ -8,4 +9,9 @@ services:
     build: .
     volumes:
       - .:/app
+    # `docker compose run` veröffentlicht Ports nur mit --service-ports.
+    # Ohne das läuft die Weboberfläche im Container, aber der Browser
+    # kommt nicht hin.
+    ports:
+      - "8090:8090"
     command: sh -c "python -m pytest && ruff check flightwaves test_flightwaves.py"
