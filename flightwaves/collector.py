@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from . import db
+from . import db, noise
 from .geo import altitude_msl, bounding_box, relate
 from .sources import OpenSky, read_dump1090, read_open_meteo
 
@@ -25,6 +25,7 @@ class _State:
     last_stored: datetime | None = None
     last_local: datetime | None = None
     callsign: str | None = None
+    noise_class: str = "unknown"
 
 
 class Tracker:
@@ -41,12 +42,20 @@ class Tracker:
         self.grace_seconds = cfg["opensky"]["local_grace_seconds"]
         self.max_qnh_age_s = cfg["weather"]["max_qnh_age_seconds"]
         self.qnh_hpa = None
+        self.ground_temperature_c = None
+        self.pressure_levels = []
+        # Die Prognose entsteht neben der Position, nicht in einem eigenen
+        # Dienst: Standort, Muster und Wetter liegen hier ohnehin vor, und
+        # damit ist die Tabelle ohne Nachlauf aktuell. Sie bleibt jederzeit
+        # neu berechenbar (Spez. 6).
+        self.model = noise.Model()
+        self.classes = noise.noise_classes()
         self.lookup_type = lookup_type
         self.state: dict[str, _State] = {}
         self.stored = 0
         self.dropped_ground = 0
         self._recover_open_flights()
-        self.refresh_qnh()
+        self.refresh_weather()
 
     def _recover_open_flights(self):
         """Laufende Flüge nach einem Neustart weiterführen, statt sie zu zerschneiden.
@@ -56,7 +65,8 @@ class Tracker:
         """
         cutoff = datetime.now(UTC) - timedelta(seconds=self.tracking["flight_gap_seconds"])
         rows = self.conn.execute(
-            "SELECT id, icao24, callsign, MAX(last_seen_utc) AS last_seen_utc FROM flights "
+            "SELECT id, icao24, callsign, aircraft_type,"
+            " MAX(last_seen_utc) AS last_seen_utc FROM flights "
             "WHERE last_seen_utc > ? GROUP BY icao24",
             (cutoff.isoformat(),),
         ).fetchall()
@@ -67,31 +77,49 @@ class Tracker:
                 last_seen=last_seen,
                 last_stored=last_seen,
                 callsign=row["callsign"],
+                noise_class=self.classes.get((row["aircraft_type"] or "").upper(), "unknown"),
             )
         if rows:
             LOG.info("%d laufende Flüge übernommen", len(rows))
 
-    def refresh_qnh(self):
-        """Jüngsten Bodendruck übernehmen, sofern er nicht zu alt ist (Spez. 4).
+    def refresh_weather(self):
+        """Jüngste Wetterlage übernehmen, sofern sie nicht zu alt ist (Spez. 4, 6).
 
-        Er korrigiert die barometrische Höhe, die eine Druckhöhe der
-        Standardatmosphäre ist. Ein veralteter Wert ist schlechter als keiner:
+        Der Luftdruck korrigiert die barometrische Höhe, die eine Druckhöhe der
+        Standardatmosphäre ist; Boden- und Höhentemperatur bestimmen die
+        Schallgeschwindigkeit. Ein veralteter Wert ist schlechter als keiner:
         30 hPa Abweichung sind rund 240 m Höhenfehler.
         """
-        row = self.conn.execute(
-            "SELECT observed_utc, pressure_msl_hpa FROM weather"
-            " WHERE level_m = 0 AND pressure_msl_hpa IS NOT NULL"
-            " ORDER BY observed_utc DESC LIMIT 1"
+        boden = self.conn.execute(
+            "SELECT observed_utc, pressure_msl_hpa, temperature_c FROM weather"
+            " WHERE level_m = 0 ORDER BY observed_utc DESC LIMIT 1"
         ).fetchone()
-        if row is None:
-            self.qnh_hpa = None
-            return
-        alter = (datetime.now(UTC) - datetime.fromisoformat(row["observed_utc"])).total_seconds()
-        self.qnh_hpa = row["pressure_msl_hpa"] if alter <= self.max_qnh_age_s else None
+        self.qnh_hpa = self.ground_temperature_c = None
+        if boden and self._frisch(boden["observed_utc"]):
+            self.qnh_hpa = boden["pressure_msl_hpa"]
+            self.ground_temperature_c = boden["temperature_c"]
+
+        neueste = self.conn.execute(
+            "SELECT MAX(observed_utc) FROM weather WHERE level_m > 0"
+        ).fetchone()[0]
+        self.pressure_levels = []
+        if neueste and self._frisch(neueste):
+            self.pressure_levels = [
+                (row["level_m"], row["temperature_c"])
+                for row in self.conn.execute(
+                    "SELECT level_m, temperature_c FROM weather WHERE observed_utc = ?"
+                    " AND level_m > 0",
+                    (neueste,),
+                )
+            ]
+
+    def _frisch(self, stamp):
+        alter = (datetime.now(UTC) - datetime.fromisoformat(stamp)).total_seconds()
+        return alter <= self.max_qnh_age_s
 
     def ingest(self, positions):
         """Meldungen verarbeiten. Gibt die Zahl gespeicherter Positionen zurück."""
-        rows, touched, stored = [], {}, 0
+        rows, predictions, touched, stored = [], [], {}, 0
 
         for pos in sorted(positions, key=lambda p: p.observed):
             # Bodenziele überspringt das Modell ohnehin und sind in
@@ -110,15 +138,15 @@ class Tracker:
                 continue        # ohne Höhe keine Schrägentfernung
             altitude_m, altitude_source = altitude
 
-            slant_m = relate(
+            lage = relate(
                 self.site["latitude_deg"],
                 self.site["longitude_deg"],
                 self.site["elevation_m"],
                 pos.latitude,
                 pos.longitude,
                 altitude_m,
-            ).slant_m
-            if slant_m > self.tracking["radius_m"]:
+            )
+            if lage.slant_m > self.tracking["radius_m"]:
                 continue
 
             state = self.state.get(pos.icao24)
@@ -151,7 +179,7 @@ class Tracker:
                     (pos.callsign, state.flight_id),
                 )
 
-            if not self._should_store(state, pos, slant_m):
+            if not self._should_store(state, pos, lage.slant_m):
                 continue
 
             state.last_stored = pos.observed
@@ -172,6 +200,9 @@ class Tracker:
                 )
             )
             stored += 1
+            vorhersage = self._predict(state, pos, lage, altitude_m)
+            if vorhersage:
+                predictions.append(vorhersage)
 
         if rows:
             self.conn.execute("BEGIN")
@@ -185,10 +216,50 @@ class Tracker:
                 "UPDATE flights SET last_seen_utc = ? WHERE id = ?",
                 [(seen, flight_id) for flight_id, seen in touched.items()],
             )
+            if predictions:
+                self.conn.executemany(
+                    "INSERT OR IGNORE INTO noise_predictions (flight_id, emitted_utc,"
+                    " arrival_utc, slant_distance_m, elevation_deg, level_dba, category,"
+                    " model_version, config_hash) VALUES (?,?,?,?,?,?,?,?,?)",
+                    predictions,
+                )
             self.conn.execute("COMMIT")
 
         self.stored += stored
         return stored
+
+    def _predict(self, state, pos, lage, altitude_m):
+        """Prognosewert zu einer gespeicherten Position (Spez. 6).
+
+        Gibt None zurück, wenn die Lärmklasse keinen Referenzpegel hat – für
+        ein Segelflugzeug oder ein Bodenfahrzeug gibt es keine Prognose,
+        keinen Ersatzwert.
+        """
+        temperatur = noise.path_temperature_c(
+            self.ground_temperature_c, self.pressure_levels, altitude_m
+        )
+        vorhersage = noise.predict(
+            self.model,
+            state.noise_class,
+            lage.slant_m,
+            lage.elevation_deg,
+            pos.vertical_rate_ms or 0.0,
+            pos.observed,
+            noise.PLACEHOLDER_TEMPERATURE_C if temperatur is None else temperatur,
+        )
+        if vorhersage is None:
+            return None
+        return (
+            state.flight_id,
+            pos.observed.isoformat(),
+            vorhersage.arrival_utc.isoformat(),
+            lage.slant_m,
+            lage.elevation_deg,
+            vorhersage.level_dba,
+            vorhersage.category,
+            noise.MODEL_VERSION,
+            self.model.config_hash(),
+        )
 
     def _should_store(self, state, pos, slant_m):
         """Abtastung nach Entfernung (Spez. 4) und Schutz gegen Wiederholungen.
@@ -207,13 +278,14 @@ class Tracker:
         return True
 
     def _open_flight(self, pos):
+        muster = self.lookup_type(pos.icao24)
         cursor = self.conn.execute(
             "INSERT INTO flights (icao24, callsign, aircraft_type, first_seen_utc, last_seen_utc)"
             " VALUES (?,?,?,?,?)",
             (
                 pos.icao24,
                 pos.callsign,
-                self.lookup_type(pos.icao24),
+                muster,
                 pos.observed.isoformat(),
                 pos.observed.isoformat(),
             ),
@@ -223,6 +295,7 @@ class Tracker:
             last_seen=pos.observed,
             last_local=pos.observed if pos.source == "adsb" else None,
             callsign=pos.callsign,
+            noise_class=self.classes.get((muster or "").upper(), "unknown"),
         )
 
     def forget_stale(self):
@@ -300,7 +373,7 @@ def run(cfg):
 
         if time.monotonic() >= next_report:
             tracker.forget_stale()
-            tracker.refresh_qnh()
+            tracker.refresh_weather()
             LOG.info(
                 "%d Positionen gespeichert, %d Flüge im Blick, %d Bodenziele verworfen",
                 tracker.stored,

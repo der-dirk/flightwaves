@@ -5,7 +5,7 @@ import bisect
 import logging
 from datetime import datetime
 
-from . import collector, config, db, noise, simulate
+from . import collector, config, db, noise, simulate, web
 from .geo import relate
 
 # Linienflug: ICAO-Schema, drei Buchstaben Airline-Kennung + Flugnummer (Spez. 15).
@@ -19,8 +19,11 @@ def main(argv=None):
     sub.add_parser("collect", help="Flugdaten dauerhaft aufzeichnen")
     wetter = sub.add_parser("weather", help="Wetterdaten dauerhaft aufzeichnen")
     wetter.add_argument("--once", action="store_true", help="einmal abrufen und beenden")
+    sub.add_parser("web", help="Weboberfläche im lokalen Netz servieren")
     sub.add_parser("check", help="Abnahmekriterien der Stufe 1.1 prüfen")
-    sub.add_parser("predict", help="LAmax je Flug aus den Positionen rechnen")
+    vorhersage = sub.add_parser("predict", help="LAmax je Flug aus der Prognosetabelle")
+    vorhersage.add_argument("--recompute", action="store_true",
+                            help="Tabelle vollständig neu berechnen")
     build = sub.add_parser("aircraft-db", help="Stammdatenbank aus einer CSV bauen")
     build.add_argument("csv", help="CSV mit den Spalten icao24 und typecode")
     sim = sub.add_parser("simulate", help="Empfänger simulieren, ohne Hardware")
@@ -36,12 +39,14 @@ def main(argv=None):
 
     if args.command == "collect":
         collector.run(cfg)
+    elif args.command == "web":
+        web.run(cfg)
     elif args.command == "weather":
         collector.run_weather(cfg, once=args.once)
     elif args.command == "check":
         return check(cfg)
     elif args.command == "predict":
-        return predict(cfg)
+        return predict(cfg, args.recompute)
     elif args.command == "simulate":
         simulate.run(cfg, args.duration, args.seed)
     else:
@@ -92,46 +97,96 @@ def temperature_for(boden, flaechen, moment, altitude_m):
     return noise.path_temperature_c(bodenwert, hoehenwerte, altitude_m)
 
 
-def predict(cfg):
-    """LAmax je Flug aus den gespeicherten Positionen (Spez. 6).
+def recompute(conn, cfg, model):
+    """Die Prognosetabelle aus den Positionen neu aufbauen (Spez. 6).
 
-    Prognosen sind aus den Positionen jederzeit neu ableitbar; deshalb wird
-    hier gerechnet und nicht nachgeschlagen. Der Dezibelwert steht bis zur
-    Kalibrierung nach Stufe 2.2 ohne Nachkommastelle und als Schätzung.
+    Sie ist abgeleitet und hält nur die aktuelle Modellversion; was
+    eingefroren bleiben muss, steht ab Stufe 2.2 in `comparisons`.
     """
-    conn = db.connect(cfg["database"]["path"])
-    model, classes, site = noise.Model(), noise.noise_classes(), cfg["site"]
+    classes, site = noise.noise_classes(), cfg["site"]
     boden, flaechen = weather_series(conn)
+    conn.execute("DELETE FROM noise_predictions")
 
-    lauteste = {}
+    stapel, gesamt = [], 0
     for row in conn.execute(
-        "SELECT f.id, f.callsign, f.aircraft_type, p.observed_utc, p.latitude,"
-        " p.longitude, p.altitude_m, p.vertical_rate_ms"
-        " FROM flights f JOIN flight_positions p ON p.flight_id = f.id"
+        "SELECT p.flight_id, p.observed_utc, p.latitude, p.longitude, p.altitude_m,"
+        " p.vertical_rate_ms, f.aircraft_type FROM flight_positions p"
+        " JOIN flights f ON f.id = p.flight_id"
     ):
         lage = relate(
             site["latitude_deg"], site["longitude_deg"], site["elevation_m"],
             row["latitude"], row["longitude"], row["altitude_m"],
         )
-        klasse = classes.get((row["aircraft_type"] or "").upper(), "unknown")
-        pegel = model.level_dba(
-            klasse, lage.slant_m, lage.elevation_deg, row["vertical_rate_ms"] or 0.0
+        abgestrahlt = datetime.fromisoformat(row["observed_utc"])
+        vorhersage = noise.predict(
+            model,
+            classes.get((row["aircraft_type"] or "").upper(), "unknown"),
+            lage.slant_m,
+            lage.elevation_deg,
+            row["vertical_rate_ms"] or 0.0,
+            abgestrahlt,
+            temperature_for(boden, flaechen, abgestrahlt, row["altitude_m"]),
         )
-        if pegel is None:
-            continue        # unpowered, notAircraft: keine Prognose
-        beobachtet = datetime.fromisoformat(row["observed_utc"])
-        temperatur = temperature_for(boden, flaechen, beobachtet, row["altitude_m"])
-        bisher = lauteste.get(row["id"])
-        if bisher is None or pegel > bisher[0]:
-            lauteste[row["id"]] = (
-                pegel, klasse, row["callsign"], row["aircraft_type"], lage.slant_m,
-                noise.arrival_utc(beobachtet, lage.slant_m, temperatur),
-            )
+        if vorhersage is None:
+            continue        # stille Klasse: keine Prognose, kein Ersatzwert
+        stapel.append((
+            row["flight_id"], row["observed_utc"], vorhersage.arrival_utc.isoformat(),
+            lage.slant_m, lage.elevation_deg, vorhersage.level_dba, vorhersage.category,
+            noise.MODEL_VERSION, model.config_hash(),
+        ))
+        # Stapelweise schreiben: eine Jahresdatenbank passt nicht in den
+        # Arbeitsspeicher eines Pi.
+        if len(stapel) >= 10000:
+            gesamt += _flush(conn, stapel)
+            stapel = []
+    gesamt += _flush(conn, stapel)
+    return gesamt
 
+
+def _flush(conn, stapel):
+    if not stapel:
+        return 0
+    conn.executemany(
+        "INSERT OR IGNORE INTO noise_predictions (flight_id, emitted_utc, arrival_utc,"
+        " slant_distance_m, elevation_deg, level_dba, category, model_version, config_hash)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        stapel,
+    )
+    return len(stapel)
+
+
+def predict(cfg, force=False):
+    """LAmax je Flug aus der Prognosetabelle (Spez. 6).
+
+    Der Collector schreibt die Werte laufend mit. Trägt die Tabelle eine
+    fremde Modellversion, wird sie neu berechnet – sie ist abgeleitet und
+    hält nur die aktuelle.
+    """
+    conn = db.connect(cfg["database"]["path"])
+    model = noise.Model()
+
+    fremd = conn.execute(
+        "SELECT COUNT(*) FROM noise_predictions WHERE model_version != ? OR config_hash != ?",
+        (noise.MODEL_VERSION, model.config_hash()),
+    ).fetchone()[0]
+    if fremd or force:
+        if fremd:
+            print(f"{fremd} Werte einer anderen Modellversion – Tabelle wird neu berechnet.")
+        print(f"{recompute(conn, cfg, model)} Prognosewerte berechnet.\n")
+
+    lauteste = conn.execute(
+        "SELECT * FROM (SELECT f.callsign, f.aircraft_type, p.level_dba, p.category,"
+        " p.slant_distance_m, p.arrival_utc, ROW_NUMBER() OVER"
+        " (PARTITION BY p.flight_id ORDER BY p.level_dba DESC) AS rang"
+        " FROM noise_predictions p JOIN flights f ON f.id = p.flight_id) WHERE rang = 1"
+        " ORDER BY level_dba DESC"
+    ).fetchall()
     if not lauteste:
-        print("Keine Positionen mit Prognose.")
+        print("Keine Prognosewerte. Läuft der Collector?")
         return 1
 
+    boden, flaechen = weather_series(conn)
+    classes = noise.noise_classes()
     print(f"Modell {noise.MODEL_VERSION}, Konfiguration {model.config_hash()}")
     print(
         f"Wetter: {len(boden)} Bodenwerte, {len(flaechen)} Höhenprofile"
@@ -140,17 +195,15 @@ def predict(cfg):
     )
     print(f"{len(lauteste)} Flüge, lauteste zuerst\n")
     print("  Rufzeichen  Muster Klasse       LAmax  Kategorie     Abstand  Ankunft")
-    for pegel, klasse, rufzeichen, muster, abstand, ankunft in sorted(
-        lauteste.values(), reverse=True
-    )[:15]:
-        print(f"  {str(rufzeichen):<11} {str(muster):<6} {klasse:<12} "
-              f"{pegel:4.0f}   {model.category(pegel):<12} "
-              f"{abstand/1000:5.1f} km  {ankunft:%H:%M:%S}")
+    for row in lauteste[:15]:
+        klasse = classes.get((row["aircraft_type"] or "").upper(), "unknown")
+        print(f"  {str(row['callsign']):<11} {str(row['aircraft_type']):<6} "
+              f"{klasse:<12} {row['level_dba']:4.0f}   {row['category']:<12} "
+              f"{row['slant_distance_m']/1000:5.1f} km  {row['arrival_utc'][11:19]}")
 
     verteilung = {}
-    for eintrag in lauteste.values():
-        name = model.category(eintrag[0])
-        verteilung[name] = verteilung.get(name, 0) + 1
+    for row in lauteste:
+        verteilung[row["category"]] = verteilung.get(row["category"], 0) + 1
     print("\n  " + "   ".join(f"{name}: {zahl}" for name, zahl in verteilung.items()))
     return 0
 
@@ -196,7 +249,46 @@ def check(cfg):
 
     # Bodenziele werden beim Import verworfen und können hier nicht gezählt
     # werden – das Protokoll des Collectors weist sie aus.
+    results += check_stage_1_2(conn)
     return 0 if all(passed for _, passed in results) else 1
+
+
+def check_stage_1_2(conn):
+    """Die aus der Datenbank prüfbaren Kriterien der Stufe 1.2 (Spez. 15).
+
+    Der Referenzwert und die Kategorieschwellen stehen als Test in
+    test_flightwaves.py; hier zählt, was die gespeicherten Werte tragen.
+    """
+    model = noise.Model()
+    vorhersagen = conn.execute("SELECT COUNT(*) FROM noise_predictions").fetchone()[0]
+    if not vorhersagen:
+        print("\n  [  ] Stufe 1.2: keine Prognosewerte in der Datenbank")
+        return [("Prognosewerte vorhanden", False)]
+
+    fremd = conn.execute(
+        "SELECT COUNT(*) FROM noise_predictions WHERE model_version != ? OR config_hash != ?",
+        (noise.MODEL_VERSION, model.config_hash()),
+    ).fetchone()[0]
+
+    # Ankunft minus Abstrahlung muss der Laufzeit entsprechen. Die
+    # Schallgeschwindigkeit hängt von der Temperatur ab; zwischen -40 und
+    # +40 Grad liegt sie zwischen 307 und 356 m/s.
+    unplausibel = conn.execute(
+        "SELECT COUNT(*) FROM noise_predictions WHERE"
+        " (julianday(arrival_utc) - julianday(emitted_utc)) * 86400.0"
+        " NOT BETWEEN slant_distance_m / 356.0 AND slant_distance_m / 307.0"
+    ).fetchone()[0]
+
+    referenz = model.level_dba("mediumJet", 300.0, 20.0, 0.0)
+    ergebnisse = [
+        (f"Referenzwert mediumJet/300 m/20 Grad: {referenz} dB(A)", referenz == 82.0),
+        (f"Prognosewerte fremder Modellversion: {fremd}", fremd == 0),
+        (f"Laufzeiten außerhalb d/c: {unplausibel} von {vorhersagen}", unplausibel == 0),
+    ]
+    print("\n  Stufe 1.2")
+    for label, passed in ergebnisse:
+        print(f"  [{'ok' if passed else '  '}] {label}")
+    return ergebnisse
 
 
 if __name__ == "__main__":

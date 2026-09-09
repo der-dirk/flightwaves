@@ -41,6 +41,14 @@ timeout_seconds = 15.0
 # sind rund 240 m Höhenfehler, mehr als die Standardatmosphäre danebenliegt.
 max_qnh_age_seconds = 10800
 
+[web]
+# Nur im lokalen Netz erreichbar, ohne Login – und deshalb nie ins Internet
+# exponieren. Kein Portfreigeben im Router.
+host = "0.0.0.0"
+port = 8090
+live_seconds = 60
+track_seconds = 600
+
 [database]
 path = "data/flightwaves.db"
 aircraft_path = "data/aircraft_database.sqlite"
