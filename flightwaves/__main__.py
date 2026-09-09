@@ -1,9 +1,9 @@
-"""Kommandozeile: python3 -m flightwaves <collect|check|aircraft-db>."""
+"""Kommandozeile: python3 -m flightwaves <collect|check|aircraft-db|simulate>."""
 
 import argparse
 import logging
 
-from . import collector, config, db
+from . import collector, config, db, simulate
 
 # Linienflug: ICAO-Schema, drei Buchstaben Airline-Kennung + Flugnummer (Spez. 15).
 SCHEDULED = "callsign GLOB '[A-Z][A-Z][A-Z][0-9]*'"
@@ -17,6 +17,9 @@ def main(argv=None):
     sub.add_parser("check", help="Abnahmekriterien der Stufe 1.1 prüfen")
     build = sub.add_parser("aircraft-db", help="Stammdatenbank aus einer CSV bauen")
     build.add_argument("csv", help="CSV mit den Spalten icao24 und typecode")
+    sim = sub.add_parser("simulate", help="Empfänger simulieren, ohne Hardware")
+    sim.add_argument("--duration", type=float, default=3600, help="Spieldauer in Sekunden")
+    sim.add_argument("--seed", type=int, default=1, help="gleicher Wert = gleicher Verkehr")
 
     args = parser.parse_args(argv)
     cfg = config.load(args.config)
@@ -29,6 +32,8 @@ def main(argv=None):
         collector.run(cfg)
     elif args.command == "check":
         return check(cfg)
+    elif args.command == "simulate":
+        simulate.run(cfg, args.duration, args.seed)
     else:
         count = db.build_aircraft_db(args.csv, cfg["database"]["aircraft_path"])
         print(f"{count} Muster nach {cfg['database']['aircraft_path']} geschrieben")
@@ -61,7 +66,7 @@ def check(cfg):
     )
 
     print(f"Zeitraum       {first} .. {last}")
-    print(f"Positionen     {positions} in {hours_covered} Stunden")
+    print(f"Positionen     {positions} in {hours_covered} h")
     print(f"Flüge          {one('SELECT COUNT(*) FROM flights')} ({scheduled} Linienflüge)")
     print()
 

@@ -60,6 +60,30 @@ docker compose run --rm dev bash     # Shell im Container
 
 Wer Python 3.11 ohnehin hat, braucht den Container nicht: `python3 -m pytest`.
 
+### Ohne Hardware testen
+
+Ein simulierter Empfänger erzeugt Verkehr um den konfigurierten Standort und
+serviert ihn im Format von dump1090 – der Collector merkt keinen Unterschied.
+Der Port kommt aus `dump1090.url`, es ist also nichts umzustellen:
+
+```sh
+python3 -m flightwaves aircraft-db assets/aircraft_types.csv   # einmalig
+python3 -m flightwaves simulate --duration 600 &
+python3 -m flightwaves collect                  # Strg-C zum Beenden
+python3 -m flightwaves check
+```
+
+Der Verkehr entspricht einem Standort im An- und Abflugbereich eines
+Drehkreuzes: 20–40 Flugzeuge gleichzeitig, Anflüge, Abflüge, Überflüge in
+Reiseflughöhe, Kleinflugzeuge, Hubschrauber, Rollverkehr am Boden,
+Empfangslücken durch Abschattung, Transponder ohne geometrische Höhe und
+Mode-S-Ziele ohne Position. Gleicher `--seed` erzeugt denselben Verkehr.
+
+Die Kennungen stammen aus dem mitgelieferten Bestand in `assets/`, sind also
+echte Registrierungen mit passendem Muster. Damit prüft der Testlauf dieselbe
+Typauflösung, die später am Gerät läuft – einschließlich der Muster, die dort
+fehlen.
+
 ## Worum es geht
 
 Prognosemodelle für Fluglärm gibt es. Was es nicht gibt, sind *überprüfte*

@@ -1,7 +1,9 @@
 """Prüfungen der Regeln, die nicht offensichtlich sind: python3 -m pytest"""
 
 import csv
+import random
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -9,6 +11,14 @@ import pytest
 from flightwaves import db
 from flightwaves.collector import Tracker
 from flightwaves.geo import altitude_msl, relate
+from flightwaves.simulate import (
+    CEILING_M,
+    FLOOR_M,
+    ground_traffic,
+    register_by_type,
+    scenario,
+    snapshot,
+)
 from flightwaves.sources import Position, parse_dump1090, parse_states
 
 SITE = {"latitude_deg": 50.0, "longitude_deg": 8.0, "elevation_m": 100.0,
@@ -194,3 +204,52 @@ def test_stammdaten_mit_herkunftskopf_werden_gelesen(tmp_path):
     ziel = tmp_path / "aircraft.sqlite"
     assert db.build_aircraft_db(quelle, ziel) == 1
     assert db.aircraft_types(ziel)("3c6444") == "A320"
+
+
+# --- Simulierter Empfänger -------------------------------------------------
+
+def test_simulator_liefert_genau_das_was_der_parser_erwartet():
+    flights, ground = scenario(1, 600, 50000), ground_traffic(1)
+    payload = snapshot(SITE, flights, ground, 300, 1_000_000.0, random.Random(1))
+    reports = parse_dump1090(payload)
+
+    assert len(reports) > 10                                   # Verkehr wie am Drehkreuz
+    assert any(r.on_ground for r in reports)                   # Rollverkehr
+    assert any(r.geom_altitude_m is None for r in reports)     # Transponder ohne alt_geom
+    assert all(-90 <= r.latitude <= 90 for r in reports)
+    assert len(payload["aircraft"]) > len(reports)             # Ziele ohne Position
+
+
+def test_fluege_verschwinden_statt_auf_bodenhoehe_zu_kleben():
+    # Ein Anflug landet, ein Abflug erreicht seine Reisehöhe – ohne das
+    # Höhenfenster klebte ein Anflug minutenlang auf der Klemmhöhe.
+    for flight in scenario(3, 1800, 50000):
+        for moment in (flight.start_s + 1, flight.cpa_s, flight.end_s - 1):
+            state = flight.state(moment)
+            if state:
+                assert FLOOR_M - 1 <= state[2] <= CEILING_M + 1
+
+
+def test_simulierter_verkehr_laeuft_durch_bis_in_die_datenbank():
+    track = tracker()
+    flights, ground = scenario(2, 600, 50000), ground_traffic(2)
+    jitter, now = random.Random(2), time.time()
+    for step in range(20):
+        payload = snapshot(SITE, flights, ground, 300 + step, now + step, jitter)
+        track.ingest(parse_dump1090(payload))
+
+    zeilen = stored(track)
+    assert len(zeilen) > 50
+    assert track.dropped_ground == 20 * len(ground)
+    quellen = {row[0] for row in track.conn.execute(
+        "SELECT DISTINCT altitude_source FROM flight_positions")}
+    assert quellen == {"geometric", "barometric"}   # beide Höhenpfade kommen vor
+
+
+def test_simulator_nimmt_echte_kennungen_aus_dem_bestand():
+    """Erfundene Kennungen würden die Typauflösung im Testlauf überspringen."""
+    register = register_by_type()
+    assert {"A320", "B738", "C172", "EC35"} <= set(register)
+
+    for flight in scenario(4, 600, 50000, register)[:20]:
+        assert flight.icao24 in register[flight.aircraft_type]
