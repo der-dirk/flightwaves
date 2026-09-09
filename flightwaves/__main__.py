@@ -2,8 +2,10 @@
 
 import argparse
 import logging
+from datetime import datetime
 
-from . import collector, config, db, simulate
+from . import collector, config, db, noise, simulate
+from .geo import relate
 
 # Linienflug: ICAO-Schema, drei Buchstaben Airline-Kennung + Flugnummer (Spez. 15).
 SCHEDULED = "callsign GLOB '[A-Z][A-Z][A-Z][0-9]*'"
@@ -15,6 +17,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("collect", help="Flugdaten dauerhaft aufzeichnen")
     sub.add_parser("check", help="Abnahmekriterien der Stufe 1.1 prüfen")
+    sub.add_parser("predict", help="LAmax je Flug aus den Positionen rechnen")
     build = sub.add_parser("aircraft-db", help="Stammdatenbank aus einer CSV bauen")
     build.add_argument("csv", help="CSV mit den Spalten icao24 und typecode")
     sim = sub.add_parser("simulate", help="Empfänger simulieren, ohne Hardware")
@@ -32,11 +35,68 @@ def main(argv=None):
         collector.run(cfg)
     elif args.command == "check":
         return check(cfg)
+    elif args.command == "predict":
+        return predict(cfg)
     elif args.command == "simulate":
         simulate.run(cfg, args.duration, args.seed)
     else:
         count = db.build_aircraft_db(args.csv, cfg["database"]["aircraft_path"])
         print(f"{count} Muster nach {cfg['database']['aircraft_path']} geschrieben")
+    return 0
+
+
+def predict(cfg):
+    """LAmax je Flug aus den gespeicherten Positionen (Spez. 6).
+
+    Prognosen sind aus den Positionen jederzeit neu ableitbar; deshalb wird
+    hier gerechnet und nicht nachgeschlagen. Der Dezibelwert steht bis zur
+    Kalibrierung nach Stufe 2.2 ohne Nachkommastelle und als Schätzung.
+    """
+    conn = db.connect(cfg["database"]["path"])
+    model, classes, site = noise.Model(), noise.noise_classes(), cfg["site"]
+
+    lauteste = {}
+    for row in conn.execute(
+        "SELECT f.id, f.callsign, f.aircraft_type, p.observed_utc, p.latitude,"
+        " p.longitude, p.altitude_m, p.vertical_rate_ms"
+        " FROM flights f JOIN flight_positions p ON p.flight_id = f.id"
+    ):
+        lage = relate(
+            site["latitude_deg"], site["longitude_deg"], site["elevation_m"],
+            row["latitude"], row["longitude"], row["altitude_m"],
+        )
+        klasse = classes.get((row["aircraft_type"] or "").upper(), "unknown")
+        pegel = model.level_dba(
+            klasse, lage.slant_m, lage.elevation_deg, row["vertical_rate_ms"] or 0.0
+        )
+        if pegel is None:
+            continue        # unpowered, notAircraft: keine Prognose
+        bisher = lauteste.get(row["id"])
+        if bisher is None or pegel > bisher[0]:
+            lauteste[row["id"]] = (
+                pegel, klasse, row["callsign"], row["aircraft_type"], lage.slant_m,
+                noise.arrival_utc(datetime.fromisoformat(row["observed_utc"]), lage.slant_m),
+            )
+
+    if not lauteste:
+        print("Keine Positionen mit Prognose.")
+        return 1
+
+    print(f"Modell {noise.MODEL_VERSION}, Konfiguration {model.config_hash()}")
+    print(f"{len(lauteste)} Flüge, lauteste zuerst\n")
+    print("  Rufzeichen  Muster Klasse       LAmax  Kategorie     Abstand  Ankunft")
+    for pegel, klasse, rufzeichen, muster, abstand, ankunft in sorted(
+        lauteste.values(), reverse=True
+    )[:15]:
+        print(f"  {str(rufzeichen):<11} {str(muster):<6} {klasse:<12} "
+              f"{pegel:4.0f}   {model.category(pegel):<12} "
+              f"{abstand/1000:5.1f} km  {ankunft:%H:%M:%S}")
+
+    verteilung = {}
+    for eintrag in lauteste.values():
+        name = model.category(eintrag[0])
+        verteilung[name] = verteilung.get(name, 0) + 1
+    print("\n  " + "   ".join(f"{name}: {zahl}" for name, zahl in verteilung.items()))
     return 0
 
 
