@@ -44,8 +44,17 @@ REQUIRED_SITE_KEYS = ("latitude_deg", "longitude_deg", "elevation_m")
 
 def load(path):
     """Konfiguration lesen, über die Voreinstellungen legen und prüfen."""
-    with open(path, "rb") as handle:
-        raw = tomllib.load(handle)
+    try:
+        with open(path, "rb") as handle:
+            raw = tomllib.load(handle)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"{path} nicht gefunden. Anlegen mit:\n"
+            f"  cp config.example.toml {path}\n"
+            "und den Standort eintragen."
+        ) from None
+    except tomllib.TOMLDecodeError as fehler:
+        raise SystemExit(f"{path} ist kein gültiges TOML: {fehler}") from None
 
     cfg = {section: dict(values) for section, values in DEFAULTS.items()}
     for section, values in raw.items():
